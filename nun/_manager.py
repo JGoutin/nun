@@ -59,7 +59,7 @@ class Manager:
         try:
             return self._platforms[name]
 
-        # Or, instantiate platform and cache it
+        # Or, instantiate the platform and cache it
         except KeyError:
             self._platforms[name] = import_module(
                 f'{platform_module}.{name}').Platform(self)

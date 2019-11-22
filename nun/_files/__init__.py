@@ -1,15 +1,29 @@
 """Files & packages formats"""
 # TODO:
+#  Support formats:
 #  - zip
 #  - tar, tar.gz, ...
 #  - deb
 #  - rpm
 #  - whl
+#  File from a link inside a JSON request
+#  File replacement method (To apply to "extract" and "download")
+#  - Compute hash
+#  - Compare hash, if identical previously stored, skip
+#  - Compare existing hash with sorted one: if file modified (by user), skip
+#    (except if "--replace" option)
+#  - write new file as "<name>.part.nun"
+#  - Once all files written, move "<name>" to "<name>.bak.nun"
+#  - Once all moved, move "<name>.part.nun" to "<name>"
+#  - If everything is OK, remove "<name>.bak.nun", store new hash and remove
+#    files that not exists with new version (If not modified)
+#  - If anything fail, revert back "<name>.bak.nun" to "<name>" and
+#    delete "<name>.part.nun".
 
 from abc import ABC
 from asyncio import create_task, CancelledError
-from os import fsdecode, remove, rename
-from os.path import join, isdir, realpath, dirname, expanduser
+from os import fsdecode, remove, rename, mkdir
+from os.path import join, isdir, realpath, dirname, expanduser, isabs
 
 from aiofiles import open as aiopen
 
@@ -100,23 +114,18 @@ class FileBase(ABC):
         """
         self._task = task
 
-    async def download(self, output='.'):
+    async def _download(self, path=None):
         """
-        Download file.
+        Download the file to the specified path
 
         Args:
-            output (path-like object): Destination.
-
-        Returns:
-            list of str: Downloaded files paths.
+            path (path-like object): Destination.
         """
         resp = await self._get()
-        output = self._set_output(output)
-        tmp_output = output + '.tmp'
-        write_task = None
+
+        # Write the file with temporary name
         try:
-            # Write file with temporary name
-            async with aiopen(tmp_output, 'wb') as file:
+            async with aiopen(path, 'wb') as file:
                 while True:
                     chunk = await resp.content.read(self._BUFFER_SIZE)
                     if write_task:
@@ -126,37 +135,138 @@ class FileBase(ABC):
                     self._size_done += len(chunk)
                     write_task = create_task(file.write(chunk))
 
-            # Move temporary file to final destination
-            try:
-                remove(output)
-            except FileNotFoundError:
-                pass
-            rename(tmp_output, output)
-
         except CancelledError:
             # Remove partially downloaded file
             try:
-                remove(tmp_output)
+                remove(path)
             except FileNotFoundError:
                 pass
-            return []
-        return [output]
 
-    async def extract(self, output='.'):
+    async def download(self, output='.'):
         """
-        Extract file.
+        Download the file.
 
         Args:
             output (path-like object): Destination.
 
         Returns:
+            list of str: Downloaded files paths.
+        """
+        try:
+            output = self._set_output(output)
+            tmp_output = output + '.tmp'
+
+            # Download the file to a temporary path
+            await self._download(tmp_output)
+
+            # Remove any previously existing file
+            try:
+                remove(output)
+            except FileNotFoundError:
+                pass
+
+            # Move the temporary file to the final destination
+            rename(tmp_output, output)
+
+        except CancelledError:
+            return []
+        return [output]
+
+    def _abs_paths(self, paths, output, trusted):
+        """
+        Check no paths are outside the working directory and return a list
+        of absolutes paths.
+
+        Args:
+            paths (iterable of str): Paths to check
+            output (str): Destination.
+            trusted (bool): If True, allow files outside of the
+                output directory.
+
+        Raises:
+            PermissionError: If "trusted" is False and at least one path is
+                outside the working directory.
+
+        Returns:
+            list of str: absolute result paths.
+        """
+        result = []
+        for path in paths:
+            if not trusted and (isabs(path) or path.startswith('..')):
+                raise PermissionError(
+                    f'The "{self._name}" archive contain files that will '
+                    'be extracted outside of the output directory. If you '
+                    'trust this archive source, use the "trusted" option '
+                    'to allow this behavior.')
+            elif not isabs(path):
+                path = join(output, path)
+            result.append(path)
+        return result
+
+    async def extract(self, output='.', trusted=False, strip_components=0):
+        """
+        Extract the file.
+
+        Args:
+            output (path-like object): Destination.
+            trusted (bool): If True, allow extraction of files outside of the
+                output directory. Default to False, because this can be a
+                security issue if extracted from an untrusted source.
+            strip_components (int): strip NUMBER leading components from file
+                path on extraction.
+
+        Returns:
             list of str: Extracted files paths.
         """
-        raise NotImplementedError(f'Extracting {self._name} is not supported.')
+        from shutil import rmtree
+        # TODO:
+        #       - strip_components
+        #       - Async stream and uncompress instead of using intermediate
+        #         temporary file
+        tmp_output = output + '.tmp'
+        mkdir(tmp_output)
+        try:
+
+            # Download to a temporary file because tarfile/zipfile does not
+            # support asyncio
+            from tempfile import TemporaryDirectory
+
+            with TemporaryDirectory() as tmp:
+                tmp_path = join(tmp, self._name)
+                await self._download(tmp_path)
+
+                # Try with TAR
+                import tarfile
+                if tarfile.is_tarfile(tmp_path):
+                    file = tarfile.TarFile(tmp_path)
+                    names = self._abs_paths(
+                        file.getnames(), tmp_output, trusted)
+                    file.extractall(tmp_output)
+
+                # Try with ZIP
+                import zipfile
+                if zipfile.is_zipfile(tmp_path):
+                    file = zipfile.ZipFile(tmp_path)
+                    names = self._abs_paths(
+                        file.namelist(), tmp_output, trusted)
+                    file.extractall(tmp_output)
+
+            if names:
+                rename(tmp_output, output)
+                return names
+
+            else:
+                remove(tmp_output)
+                raise NotImplementedError(
+                    f'Extracting {self._name} is not supported.')
+
+        except CancelledError:
+            rmtree(tmp_output, ignore_errors=True)
+            return []
 
     async def install(self):
         """
-        Install file.
+        Install the file.
 
         Returns:
             list of str: Installed files paths.

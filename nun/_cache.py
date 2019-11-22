@@ -107,7 +107,7 @@ async def set_cache(name, obj, long=False):
         name (str): Cache name.
         obj (dict or list): Object to cache.
         long (bool): If true, enable "long cache". Long cache have a
-            far greater expiration delay which is reset on access. This is
+            far greater expiration delay that is reset on access. This is
             useful to store data that will likely not change.
     """
     path = join(CACHE_DIR, _hash_name(name) + ('l' if long else 's'))

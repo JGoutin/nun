@@ -437,7 +437,7 @@ class Resource(ResourceBase):
         if self._ref_name:
             return
 
-        # If not specified, default to latest version
+        # If not specified, default to the latest version
         release_task = create_task(self._github_api(
             f'/repos/{self._owner}/{self._repo}/releases/latest'))
         branch_task = create_task(self._github_api(
