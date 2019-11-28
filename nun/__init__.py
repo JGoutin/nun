@@ -16,6 +16,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
+__version__ = '1.0.0'
 # TODO:
 # - Provides packages: WHL, DEB, RPM, chocolatey, Inno setup, exe zip
 # - Vendor dependencies if not packaged.
@@ -27,7 +28,19 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from nun._manager import Manager as _Manager
 
 
-async def download(resources_ids, output='.', no_track=False):
+async def _perform(action, resources_ids, **kwargs):
+    """
+    Perform action.
+
+    Args:
+        action (str): Action method.
+        resources_ids (iterable of str): Resources ID.
+    """
+    async with _Manager(resources_ids, **kwargs) as manager:
+        await manager.perform(action)
+
+
+async def download(resources_ids, output='.', no_track=False, debug=False):
     """
     Download.
 
@@ -35,7 +48,30 @@ async def download(resources_ids, output='.', no_track=False):
         resources_ids (iterable of str): Resources ID.
         output (path-like object): Destination.
         no_track (bool): If True, does not track file.
+        debug (bool): If True, show full error traceback and stop on first
+                      error.
     """
-    async with _Manager(
-            resources_ids, no_track=no_track, output=output) as manager:
-        await manager.download()
+    await _perform('download', resources_ids, output=output, no_track=no_track,
+                   debug=debug)
+
+
+async def extract(resources_ids, output='.', no_track=False, debug=False,
+                  trusted=False, strip_components=0):
+    """
+    Extract.
+
+    Args:
+        resources_ids (iterable of str): Resources ID.
+        output (path-like object): Destination.
+        no_track (bool): If True, does not track file.
+        debug (bool): If True, show full error traceback and stop on first
+                      error.
+        trusted (bool): If True, allow extraction of files outside of the
+            output directory. Default to False, because this can be a
+            security issue if extracted from an untrusted source.
+        strip_components (int): strip NUMBER leading components from file
+            path on extraction.
+    """
+    await _perform('extract', resources_ids, output=output, no_track=no_track,
+                   debug=debug, trusted=trusted,
+                   strip_components=strip_components)

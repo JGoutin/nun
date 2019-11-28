@@ -19,6 +19,9 @@ def _run_command():
         dest='parser_action', title='Commands',
         help='Commands', description=''
         )
+    parser.add_argument('--debug',  action='store_true',
+                        help='If True, show full error traceback and stop on '
+                             'first error.')
 
     # Parser: "nun download"
     # TODO: Autocomplete resource_id from platforms
@@ -38,6 +41,13 @@ def _run_command():
     action.add_argument('--output', '-o', help='Output directory.', default='.')
     action.add_argument('--no_track', '-n', help='Does not track.',
                         action='store_true')
+    action.add_argument('--trusted',
+                        help='Allow extraction of files outside of the '
+                             'output directory.',
+                        action='store_true')
+    action.add_argument('--strip_components', type=int, default=0,
+                        help='strip NUMBER leading components from file '
+                             'path on extraction')
 
     # Parser: "nun install"
     description = 'Install packages.'
@@ -94,6 +104,8 @@ def _run_command():
         parser.exit(status=1, message="Interrupted by user\n")
 
     except Exception as exception:
+        if args.get('debug'):
+            raise
         parser.exit(status=1, message=f'\033[31m{exception}\033[30m\n')
 
 

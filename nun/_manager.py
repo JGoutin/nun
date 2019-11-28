@@ -14,12 +14,15 @@ from nun._cache import clear_cache
 class Manager:
     """Package manager"""
     __slots__ = ('_resources_ids', '_resources', '_track', '_http_session',
-                 '_platforms', '_action_kwargs', '_width', '_clear', '_output')
+                 '_platforms', '_action_kwargs', '_width', '_clear', '_output',
+                 '_debug')
 
     #: Output type, set externally
     OUTPUT = None
 
-    def __init__(self, resources_ids, no_track=False, **action_kwargs):
+    def __init__(self, resources_ids, no_track=False, debug=False,
+                 **action_kwargs):
+        self._debug = debug
         self._resources_ids = resources_ids
         self._resources = None
         self._track = not no_track
@@ -81,22 +84,21 @@ class Manager:
                 add_resource(self.get_platform(scheme).get_resource(path))
         return self._resources
 
-    async def download(self):
+    async def perform(self, action):
         """
-        Download files
+        Perform action on files
         """
-        # TODO: Make this global for download, extract...
-
         # Generated tasks
         # TODO: Check if up to date before generating tasks
         files = []
         add_file = files.append
         for resource in self.resources:
             async for file in resource.files:
-                task = create_task(file.download(**self._action_kwargs))
+                task = create_task(getattr(file, action)(**self._action_kwargs))
                 file.set_task(task)
                 add_file(file)
 
+        # TODO: Also show destination + action
         progress = create_task(self._output.show_progress(files))
 
         # Wait for completion
@@ -106,7 +108,7 @@ class Manager:
                 await file.task
             except Exception:
                 # Tasks processing exceptions are handled by output
-                if self._output:
+                if self._output and not self._debug:
                     failed.append(file)
                     continue
                 raise

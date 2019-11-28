@@ -126,6 +126,7 @@ class FileBase(ABC):
         # Write the file with temporary name
         try:
             async with aiopen(path, 'wb') as file:
+                write_task = None
                 while True:
                     chunk = await resp.content.read(self._BUFFER_SIZE)
                     if write_task:
@@ -238,7 +239,7 @@ class FileBase(ABC):
                 # Try with TAR
                 import tarfile
                 if tarfile.is_tarfile(tmp_path):
-                    file = tarfile.TarFile(tmp_path)
+                    file = tarfile.open(tmp_path)
                     names = self._abs_paths(
                         file.getnames(), tmp_output, trusted)
                     file.extractall(tmp_output)

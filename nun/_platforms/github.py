@@ -388,6 +388,7 @@ class Resource(ResourceBase):
 
         # Archives
         # TODO: Preselect file format to use since known in advance
+        #       + pass 'strip_components=1' as default on extract
         if self._res in ('zipball', 'tarball'):
             yield (f'{self._owner}-{self._repo}-{self._ref_name}.'
                    f'{"zip" if self._res == "zipball" else "tar.gz"} ',
