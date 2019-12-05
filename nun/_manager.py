@@ -95,7 +95,7 @@ class Manager:
         for resource in self.resources:
             async for file in resource.files:
                 task = create_task(getattr(file, action)(**self._action_kwargs))
-                file.set_task(task)
+                file.set_task(task)  # TODO: do not store task in file
                 add_file(file)
 
         # TODO: Also show destination + action

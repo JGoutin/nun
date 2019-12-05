@@ -7,25 +7,16 @@
 #  - rpm
 #  - whl
 #  File from a link inside a JSON request
-#  File replacement method (To apply to "extract" and "download")
-#  - Compute hash
-#  - Compare hash, if identical previously stored, skip
-#  - Compare existing hash with sorted one: if file modified (by user), skip
-#    (except if "--replace" option)
-#  - write new file as "<name>.part.nun"
-#  - Once all files written, move "<name>" to "<name>.bak.nun"
-#  - Once all moved, move "<name>.part.nun" to "<name>"
-#  - If everything is OK, remove "<name>.bak.nun", store new hash and remove
-#    files that not exists with new version (If not modified)
-#  - If anything fail, revert back "<name>.bak.nun" to "<name>" and
-#    delete "<name>.part.nun".
 
 from abc import ABC
 from asyncio import create_task, CancelledError
-from os import fsdecode, remove, rename, mkdir
+from os import fsdecode, rename, mkdir
 from os.path import join, isdir, realpath, dirname, expanduser, isabs
 
 from aiofiles import open as aiopen
+
+from nun._common import remove, BUFFER_SIZE
+from nun._destination import Destination
 
 
 class FileBase(ABC):
@@ -39,8 +30,6 @@ class FileBase(ABC):
     """
     __slots__ = ('_name', '_url', '_resource', '_request', '_size',
                  '_size_done', '_done', '_mime_type', '_task')
-
-    _BUFFER_SIZE = 65536
 
     def __init__(self, name, url, resource):
         self._name = name
@@ -114,35 +103,6 @@ class FileBase(ABC):
         """
         self._task = task
 
-    async def _download(self, path=None):
-        """
-        Download the file to the specified path
-
-        Args:
-            path (path-like object): Destination.
-        """
-        resp = await self._get()
-
-        # Write the file with temporary name
-        try:
-            async with aiopen(path, 'wb') as file:
-                write_task = None
-                while True:
-                    chunk = await resp.content.read(self._BUFFER_SIZE)
-                    if write_task:
-                        await write_task
-                    if not chunk:
-                        break
-                    self._size_done += len(chunk)
-                    write_task = create_task(file.write(chunk))
-
-        except CancelledError:
-            # Remove partially downloaded file
-            try:
-                remove(path)
-            except FileNotFoundError:
-                pass
-
     async def download(self, output='.'):
         """
         Download the file.
@@ -153,25 +113,21 @@ class FileBase(ABC):
         Returns:
             list of str: Downloaded files paths.
         """
+        dest = Destination(self._set_output(output))
         try:
-            output = self._set_output(output)
-            tmp_output = output + '.tmp'
-
-            # Download the file to a temporary path
-            await self._download(tmp_output)
-
-            # Remove any previously existing file
-            try:
-                remove(output)
-            except FileNotFoundError:
-                pass
-
-            # Move the temporary file to the final destination
-            rename(tmp_output, output)
+            await dest.write(await self._get())
+            await dest.move()
+            await dest.clear()
 
         except CancelledError:
+            await dest.cancel()
             return []
-        return [output]
+
+        except Exception:
+            await dest.cancel()
+            raise
+
+        return [dest.path]
 
     def _abs_paths(self, paths, output, trusted):
         """
@@ -219,6 +175,13 @@ class FileBase(ABC):
         Returns:
             list of str: Extracted files paths.
         """
+        # TODO: refactor to use destination with following sequential flow
+        #       - Create destinations
+        #       - dest.write on all
+        #       - if OK, dest.move on all
+        #       - if OK, dest.clear on all
+        #       - if any error: dest.cancel on all
+
         from shutil import rmtree
         # TODO:
         #       - strip_components
@@ -257,13 +220,43 @@ class FileBase(ABC):
                 return names
 
             else:
-                remove(tmp_output)
+                await remove(tmp_output)
                 raise NotImplementedError(
                     f'Extracting {self._name} is not supported.')
 
         except CancelledError:
             rmtree(tmp_output, ignore_errors=True)
             return []
+
+    async def _download(self, path=None):
+        """
+        Download the file to the specified path
+
+        Args:
+            path (path-like object): Destination.
+        """
+        # TODO: remove once extract use "destination"
+        resp = await self._get()
+
+        # Write the file with temporary name
+        try:
+            async with aiopen(path, 'wb') as file:
+                write_task = None
+                while True:
+                    chunk = await resp.content.read(BUFFER_SIZE)
+                    if write_task:
+                        await write_task
+                    if not chunk:
+                        break
+                    self._size_done += len(chunk)
+                    write_task = create_task(file.write(chunk))
+
+        except CancelledError:
+            # Remove partially downloaded file
+            try:
+                await remove(path)
+            except FileNotFoundError:
+                pass
 
     async def install(self):
         """
@@ -279,7 +272,7 @@ class FileBase(ABC):
         Performs a get request on file URL.
 
         Returns:
-            aiohttp.client_reqrep.ClientResponse: Response.
+            async file-like object: Response content.
         """
         # TODO: Parallel download
         # Perform requests and handle exceptions
@@ -298,7 +291,10 @@ class FileBase(ABC):
         except (KeyError, IndexError):
             pass
 
-        return resp
+        # TODO: Return a modified version with a callback that update
+        #       "self._size_done"
+        #       Should also feature digest and signature verification
+        return resp.content
 
     def _set_output(self, output, target_is_dir=False):
         """
