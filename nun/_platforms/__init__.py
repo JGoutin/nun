@@ -4,12 +4,12 @@
 #  - gitlab
 #  - git (Any git over internet)
 #  - http (any single file over internet)
+#  - + File from a link inside a JSON request
 
 from abc import ABC, abstractmethod
 from json import load, dump
 from os.path import join
 
-from nun._files import FileBase
 from nun._config import CONFIG_DIR
 
 
@@ -39,7 +39,7 @@ class PlatformBase(ABC):
         """
 
     @abstractmethod
-    async def autocomplete(self, partial_resource_id):
+    def autocomplete(self, partial_resource_id):
         """
         Autocomplete resource ID.
 
@@ -50,7 +50,7 @@ class PlatformBase(ABC):
             list of str: Resource ID candidates.
         """
 
-    async def request(self, url, method='GET', ignore_status=None, **kwargs):
+    def request(self, url, method='GET', ignore_status=None, **kwargs):
         """
         Performs a request.
 
@@ -59,18 +59,18 @@ class PlatformBase(ABC):
             url (str): URL.
             ignore_status (tuple of int): Does not raise exceptions on theses
                 status.
-            kwargs: aiohttp.client.ClientSession.request keyword arguments
+            kwargs: requests.Session.request keyword arguments
 
         Returns:
-            aiohttp.client_reqrep.ClientResponse: Response.
+            requests.Response: Response.
         """
         if self._http_request is None:
             self._http_request = self._manager.http_session.request
 
         # TODO: Add automatic retries for common return codes (
         #       408, 500, 502, 504)
-        response = await self._http_request(method, url, **kwargs)
-        if ignore_status and response.status not in ignore_status:
+        response = self._http_request(method, url, **kwargs)
+        if ignore_status and response.status_code not in ignore_status:
             response.raise_for_status()
 
         return response
@@ -166,7 +166,7 @@ class ResourceBase(ABC):
 
     @property
     @abstractmethod
-    async def info(self):
+    def info(self):
         """
         Reference information.
 
@@ -176,7 +176,7 @@ class ResourceBase(ABC):
 
     @property
     @abstractmethod
-    async def version(self):
+    def version(self):
         """
         Resource version.
 
@@ -185,28 +185,17 @@ class ResourceBase(ABC):
         """
 
     @property
-    async def files(self):
+    @abstractmethod
+    def files(self):
         """
         Files of this resource.
 
         Returns:
-            async generator of nun._files.FileBase: Files.
+            generator of nun._files.FileBase: Files.
         """
-        async for name, url in self._get_files():
-            yield FileBase(name, url, self)
 
     @abstractmethod
-    async def _get_files(self):
-        """
-        Files of this resource.
-
-        Returns:
-            async generator of tuple: name, url.
-        """
-        yield
-
-    @abstractmethod
-    async def exception_handler(self, status=404, res_name=None):
+    def exception_handler(self, status=404, res_name=None):
         """
         Handle exception to return clear error message.
 

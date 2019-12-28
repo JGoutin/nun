@@ -1,11 +1,10 @@
+# coding=utf-8
 """Cache management"""
 from hashlib import blake2b
 from json import loads, dumps
 from os import listdir, utime, remove
 from os.path import join, getmtime
 from time import time
-
-from aiofiles import open as aiopen
 
 from nun._config import CACHE_DIR
 
@@ -50,7 +49,7 @@ def _get_expiry():
             'l': current_time - _LONG_EXPIRY}
 
 
-async def get_cache(name, recursive=False):
+def get_cache(name, recursive=False):
     """
     Get an object from disk cache.
 
@@ -87,7 +86,7 @@ async def get_cache(name, recursive=False):
 
             if timestamp < expiry[mode]:
                 # Expired, deleted
-                await remove(path)
+                remove(path)
                 continue
 
             if mode == 'l':
@@ -95,11 +94,11 @@ async def get_cache(name, recursive=False):
                 utime(path)
 
             # Retrieve cached data
-            async with aiopen(path, 'rt') as file:
-                return loads(await file.read())
+            with open(path, 'rt') as file:
+                return loads(file.read())
 
 
-async def set_cache(name, obj, long=False):
+def set_cache(name, obj, long=False):
     """
     Add an object to disk cache.
 
@@ -111,5 +110,5 @@ async def set_cache(name, obj, long=False):
             useful to store data that will likely not change.
     """
     path = join(CACHE_DIR, _hash_name(name) + ('l' if long else 's'))
-    async with aiopen(path, 'wt') as file:
-        await file.write(dumps(obj))
+    with open(path, 'wt') as file:
+        file.write(dumps(obj))

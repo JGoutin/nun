@@ -1,3 +1,4 @@
+# coding=utf-8
 """Outputs"""
 
 # Bytes units
@@ -35,7 +36,7 @@ class OutputBase:
             text (str): text.
         """
 
-    async def show_progress(self, files):
+    def show_progress(self, files):
         """
         Show progression
 

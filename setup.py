@@ -19,7 +19,6 @@ PACKAGE_INFO = dict(
         # Must be listed on: https://pypi.org/classifiers/
         'Development Status :: 3 - Alpha',
         'Environment :: Console',
-        'Framework :: AsyncIO',
         'Intended Audience :: End Users/Desktop',
         'Intended Audience :: System Administrators',
         'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
@@ -45,10 +44,9 @@ PACKAGE_INFO = dict(
     license='GPLv3',
     python_requires='>=3.6',
     install_requires=[
-        'aiohttp',
-        'aiofiles',
-        'aiosqlite',
         'argcomplete>=1.10',
+        'requests>=2.20.0',
+        'python-dateutil>=2.6.0'
     ],
     setup_requires=['setuptools'],
     tests_require=['pytest'],

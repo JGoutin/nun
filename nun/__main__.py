@@ -32,6 +32,8 @@ def _run_command():
     action.add_argument('--output', '-o', help='Output directory.', default='.')
     action.add_argument('--no_track', '-n', help='Does not track.',
                         action='store_true')
+    action.add_argument('--force', '-f', help='Always replace destination.',
+                        action='store_true')
 
     # Parser: "nun extract"
     description = 'Extract archives.'
@@ -48,6 +50,8 @@ def _run_command():
     action.add_argument('--strip_components', type=int, default=0,
                         help='strip NUMBER leading components from file '
                              'path on extraction')
+    action.add_argument('--force', '-f', help='Always replace destination.',
+                        action='store_true')
 
     # Parser: "nun install"
     description = 'Install packages.'
@@ -91,14 +95,13 @@ def _run_command():
         parser.error('An action is required')
 
     try:
-        import asyncio
         from os.path import dirname, realpath
         import sys
         sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
         import nun
         nun._Manager.OUTPUT = 'console'
-        asyncio.run(getattr(nun, parser_action)(**args))
+        getattr(nun, parser_action)(**args)
 
     except KeyboardInterrupt:  # pragma: no cover
         parser.exit(status=1, message="Interrupted by user\n")

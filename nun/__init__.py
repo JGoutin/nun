@@ -1,3 +1,4 @@
+# coding=utf-8
 """
 nun
 
@@ -17,6 +18,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 __version__ = '1.0.0'
+
 # TODO:
 # - Provides packages: WHL, DEB, RPM, chocolatey, Inno setup, exe zip
 # - Vendor dependencies if not packaged.
@@ -28,7 +30,7 @@ __version__ = '1.0.0'
 from nun._manager import Manager as _Manager
 
 
-async def _perform(action, resources_ids, **kwargs):
+def _perform(action, resources_ids, **kwargs):
     """
     Perform action.
 
@@ -36,11 +38,12 @@ async def _perform(action, resources_ids, **kwargs):
         action (str): Action method.
         resources_ids (iterable of str): Resources ID.
     """
-    async with _Manager(resources_ids, **kwargs) as manager:
-        await manager.perform(action)
+    with _Manager(resources_ids, **kwargs) as manager:
+        manager.perform(action)
 
 
-async def download(resources_ids, output='.', no_track=False, debug=False):
+def download(resources_ids, output='.', no_track=False, debug=False,
+             force=False):
     """
     Download.
 
@@ -50,13 +53,14 @@ async def download(resources_ids, output='.', no_track=False, debug=False):
         no_track (bool): If True, does not track file.
         debug (bool): If True, show full error traceback and stop on first
                       error.
+        force (bool): Replace any existing destination even if modified by user.
     """
-    await _perform('download', resources_ids, output=output, no_track=no_track,
-                   debug=debug)
+    _perform('download', resources_ids, output=output, no_track=no_track,
+             debug=debug, force=force)
 
 
-async def extract(resources_ids, output='.', no_track=False, debug=False,
-                  trusted=False, strip_components=0):
+def extract(resources_ids, output='.', no_track=False, debug=False,
+            trusted=False, strip_components=0, force=False):
     """
     Extract.
 
@@ -71,7 +75,8 @@ async def extract(resources_ids, output='.', no_track=False, debug=False,
             security issue if extracted from an untrusted source.
         strip_components (int): strip NUMBER leading components from file
             path on extraction.
+        force (bool): Replace any existing destination even if modified by user.
     """
-    await _perform('extract', resources_ids, output=output, no_track=no_track,
-                   debug=debug, trusted=trusted,
-                   strip_components=strip_components)
+    _perform('extract', resources_ids, output=output, no_track=no_track,
+             debug=debug, trusted=trusted,
+             strip_components=strip_components, force=force)

@@ -1,22 +1,61 @@
+# coding=utf-8
 """Files & packages formats"""
 # TODO:
-#  Support formats:
-#  - zip
-#  - tar, tar.gz, ...
-#  - deb
-#  - rpm
-#  - whl
-#  File from a link inside a JSON request
+#  - Support formats: deb, rpm, whl, gz, xz, bz2
+#  - Allow user to select file type to use
+#  - Get from db and update db
+
 
 from abc import ABC
-from asyncio import create_task, CancelledError
-from os import fsdecode, rename, mkdir
-from os.path import join, isdir, realpath, dirname, expanduser, isabs
+from dateutil.parser import parse
+from importlib import import_module
+from os import fsdecode
+from os.path import join, isdir, realpath, dirname, expanduser, isabs, splitext
 
-from aiofiles import open as aiopen
-
-from nun._common import remove, BUFFER_SIZE
 from nun._destination import Destination
+
+#: File types aliases
+ALIASES = {
+    'tgz': 'tar',
+    'tbz': 'tar',
+    'tlz': 'tar',
+    'txz': 'tar'
+}
+
+
+def create_file(name, url, resource, file_type=None, mtime=None,
+                strip_components=0):
+    """
+    Args:
+        name (str): File name.
+        url (str): URL.
+        resource (nun._platforms.ResourceBase subclass instance): Resource.
+        file_type (str): File type to use if known in advance.
+        mtime (int or float): Modification timestamp.
+        strip_components (int): strip NUMBER leading components from file
+            path when extracting an archive.
+
+    Returns:
+        FileBase subclass instance: File
+    """
+    # Detect file type based on its extension
+    if file_type is None:
+        filename, ext = splitext(name.lower())
+        if ext in ('.gz', '.bz2', '.lz', '.xz') and filename.endswith('.tar'):
+            # Handle the ".tar.<compression>" special case
+            file_type = 'tar'
+        else:
+            file_type = ext.lstrip('.')
+
+        file_type = ALIASES.get(file_type, file_type)
+
+    try:
+        cls = import_module(f'nun._files.{file_type}').File
+    except ImportError:
+        cls = FileBase
+
+    return cls(name, url, resource, mtime=mtime,
+               strip_components=strip_components)
 
 
 class FileBase(ABC):
@@ -27,18 +66,28 @@ class FileBase(ABC):
         name (str): File name.
         url (str): URL.
         resource (nun._platforms.ResourceBase subclass instance): Resource.
+        mtime (int or float): Modification timestamp.
+        strip_components (int): strip NUMBER leading components from file
+            path when extracting an archive.
     """
     __slots__ = ('_name', '_url', '_resource', '_request', '_size',
-                 '_size_done', '_done', '_mime_type', '_task')
+                 '_size_done', '_done', '_exception', '_mtime', '_etag',
+                 '_accept_range', '_output', '_trusted')
 
-    def __init__(self, name, url, resource):
+    def __init__(self, name, url, resource, mtime=None, strip_components=0):
         self._name = name
         self._url = url
         self._resource = resource
         self._request = self._resource.platform.request
         self._done = False
-        self._mime_type = None
-        self._task = None
+        self._exception = None
+        self._content_type = None
+        self._mtime = mtime
+        self._etag = None
+        self._accept_range = False
+        self._output = None
+        self._strip_components = strip_components
+        self._trusted = False
 
         # For progress information
         self._size = 0
@@ -85,82 +134,58 @@ class FileBase(ABC):
         return self._size_done
 
     @property
-    def task(self):
+    def done(self):
         """
         Operation completed
 
         Returns:
             bool: True if done.
         """
-        return self._task
+        return self._done
 
-    def set_task(self, task):
+    @property
+    def exception(self):
         """
-        Set the task used to perform file operation.
+        Exception that occurred during operation if any.
+
+        Returns:
+            None or Exception subclass: Exception.
+        """
+        return self._exception
+
+    def set_done_callback(self, future):
+        """
+        Callback to set the file operation completed.
 
         Args:
-            task (asyncio.Task): Task.
+            future (concurrent.futures.Future): Future.
         """
-        self._task = task
+        self._done = True
+        self._exception = future.exception()
 
-    async def download(self, output='.'):
+    def download(self, output='.', force=False):
         """
         Download the file.
 
         Args:
             output (path-like object): Destination.
+            force (bool): Replace destination if exists and modified by user.
 
         Returns:
             list of str: Downloaded files paths.
         """
-        dest = Destination(self._set_output(output))
-        try:
-            await dest.write(await self._get())
-            await dest.move()
-            await dest.clear()
+        self._set_output(output)
 
-        except CancelledError:
-            await dest.cancel()
-            return []
-
-        except Exception:
-            await dest.cancel()
-            raise
+        # Force strip_components=0 on a single file
+        with Destination(self._set_path(self._name, strip_components=0),
+                         force=force) as dest:
+            dest.write(self._get())
+            dest.move(self._mtime)
+            dest.clear()
 
         return [dest.path]
 
-    def _abs_paths(self, paths, output, trusted):
-        """
-        Check no paths are outside the working directory and return a list
-        of absolutes paths.
-
-        Args:
-            paths (iterable of str): Paths to check
-            output (str): Destination.
-            trusted (bool): If True, allow files outside of the
-                output directory.
-
-        Raises:
-            PermissionError: If "trusted" is False and at least one path is
-                outside the working directory.
-
-        Returns:
-            list of str: absolute result paths.
-        """
-        result = []
-        for path in paths:
-            if not trusted and (isabs(path) or path.startswith('..')):
-                raise PermissionError(
-                    f'The "{self._name}" archive contain files that will '
-                    'be extracted outside of the output directory. If you '
-                    'trust this archive source, use the "trusted" option '
-                    'to allow this behavior.')
-            elif not isabs(path):
-                path = join(output, path)
-            result.append(path)
-        return result
-
-    async def extract(self, output='.', trusted=False, strip_components=0):
+    def extract(self, output='.', trusted=False, strip_components=0):
         """
         Extract the file.
 
@@ -175,90 +200,32 @@ class FileBase(ABC):
         Returns:
             list of str: Extracted files paths.
         """
-        # TODO: refactor to use destination with following sequential flow
-        #       - Create destinations
-        #       - dest.write on all
-        #       - if OK, dest.move on all
-        #       - if OK, dest.clear on all
-        #       - if any error: dest.cancel on all
+        self._trusted = trusted
+        self._set_output(output)
+        if strip_components is not 0:
+            self._strip_components = strip_components
 
-        from shutil import rmtree
-        # TODO:
-        #       - strip_components
-        #       - Async stream and uncompress instead of using intermediate
-        #         temporary file
-        tmp_output = output + '.tmp'
-        mkdir(tmp_output)
-        try:
+        # Perform operation sequentially to allow to revert back on error
+        destinations = self._extract()
 
-            # Download to a temporary file because tarfile/zipfile does not
-            # support asyncio
-            from tempfile import TemporaryDirectory
+        for dest in destinations:
+            dest.move()
 
-            with TemporaryDirectory() as tmp:
-                tmp_path = join(tmp, self._name)
-                await self._download(tmp_path)
+        for dest in destinations:
+            dest.clear()
 
-                # Try with TAR
-                import tarfile
-                if tarfile.is_tarfile(tmp_path):
-                    file = tarfile.open(tmp_path)
-                    names = self._abs_paths(
-                        file.getnames(), tmp_output, trusted)
-                    file.extractall(tmp_output)
+        return [dest.path for dest in destinations]
 
-                # Try with ZIP
-                import zipfile
-                if zipfile.is_zipfile(tmp_path):
-                    file = zipfile.ZipFile(tmp_path)
-                    names = self._abs_paths(
-                        file.namelist(), tmp_output, trusted)
-                    file.extractall(tmp_output)
-
-            if names:
-                rename(tmp_output, output)
-                return names
-
-            else:
-                await remove(tmp_output)
-                raise NotImplementedError(
-                    f'Extracting {self._name} is not supported.')
-
-        except CancelledError:
-            rmtree(tmp_output, ignore_errors=True)
-            return []
-
-    async def _download(self, path=None):
+    def _extract(self):
         """
-        Download the file to the specified path
+        Extract the file.
 
-        Args:
-            path (path-like object): Destination.
+        Returns:
+            list of nun._destination.Destination: destinations
         """
-        # TODO: remove once extract use "destination"
-        resp = await self._get()
+        raise NotImplementedError(f'extracting {self._name} is not supported.')
 
-        # Write the file with temporary name
-        try:
-            async with aiopen(path, 'wb') as file:
-                write_task = None
-                while True:
-                    chunk = await resp.content.read(BUFFER_SIZE)
-                    if write_task:
-                        await write_task
-                    if not chunk:
-                        break
-                    self._size_done += len(chunk)
-                    write_task = create_task(file.write(chunk))
-
-        except CancelledError:
-            # Remove partially downloaded file
-            try:
-                await remove(path)
-            except FileNotFoundError:
-                pass
-
-    async def install(self):
+    def install(self):
         """
         Install the file.
 
@@ -267,22 +234,33 @@ class FileBase(ABC):
         """
         raise NotImplementedError(f'Installing {self._name} is not supported.')
 
-    async def _get(self):
+    def _get(self):
         """
         Performs a get request on file URL.
 
         Returns:
-            async file-like object: Response content.
+            file-like object: Response content.
         """
-        # TODO: Parallel download
+        # TODO:
+        #  - Compare ETag and cancel action if identical to previous
+        #    ignore absent or weak ETag (starts by "W/")
+
         # Perform requests and handle exceptions
-        resp = await self._request(self._url)
-        await self._resource.exception_handler(resp.status, self._name)
+        resp = self._request(self._url, stream=True)
+        self._resource.exception_handler(resp.status_code, self._name)
 
         # Get information from headers
         headers = resp.headers
         self._size = int(headers.get('Content-Length', 0))
-        self._mime_type = headers.get('Content-Type')
+
+        if self._mtime is None:
+            try:
+                self._mtime = parse(headers['Last-Modified']).timestamp()
+            except KeyError:
+                pass
+
+        self._etag = headers.get('ETag')
+        self._accept_range = headers.get('Accept-Ranges', 'none') == 'bytes'
         try:
             # Update file name if specified
             content = headers['Content-Disposition'].split('=', 1)
@@ -291,36 +269,63 @@ class FileBase(ABC):
         except (KeyError, IndexError):
             pass
 
-        # TODO: Return a modified version with a callback that update
-        #       "self._size_done"
-        #       Should also feature digest and signature verification
-        return resp.content
+        # TODO: Adapt result file object to
+        #  - update "self._size_done" while reading
+        #  - Parallel download (if self._accept_range)
+        #  - Signature/digest verification
+        #  - Cache content locally and add "seek" support
+        return resp.raw
 
-    def _set_output(self, output, target_is_dir=False):
+    def _set_output(self, output):
+        """
+        Set the output directory.
+
+        Args:
+            output (path-like object): output directory.
+        """
+        self._output = realpath(expanduser(fsdecode(output)))
+
+    def _set_path(self, path, target_is_dir=False,
+                  strip_components=0):
         """
         Set final destination path.
 
         Args:
-            output (path-like object): Destination.
+            path (str): Object path.
             target_is_dir (bool): Target is a directory.
+            strip_components (int): strip NUMBER leading components from file
+                path.
 
         Returns:
             str: Destination absolute path.
         """
-        output = realpath(expanduser(fsdecode(output)))
+        # TODO:
+        #  - strip_components
 
-        if isdir(output):
+        # Ensure path is not outside output directory for untrusted sources
+        absolute = isabs(path)
+        if not self._trusted and (absolute or path.startswith('..')):
+            raise PermissionError(
+                f'The "{self._name}" target a destination outside '
+                f'of the output directory. If you trust this source, use the '
+                f'"trusted" option to allow this behavior.')
+
+        # Returns absolute paths without changes
+        elif absolute:
+            return path
+
+        if isdir(self._output):
             # Destination is this directory
             if target_is_dir:
-                return output
+                return self._output
 
             # Destination is a file in this directory
-            return join(output, self._name)
+            return join(self._output, path)
 
         # Parent directory does not exists
-        if not isdir(dirname(output)):
+        if not isdir(dirname(self._output)):
             raise FileNotFoundError(
-                f'Output directory "{dirname(output)}" does not exists.')
+                f'Output directory "{dirname(self._output)}" does not exists.')
 
         # This directory is a new sub-directory
-        return output
+        return self._output

@@ -1,10 +1,11 @@
+# coding=utf-8
 """
 Manager
 """
-from asyncio import create_task
 from importlib import import_module
+from concurrent.futures import ThreadPoolExecutor
 
-#import aiosqlite
+from requests import Session
 
 from nun._platforms import __name__ as platform_module
 from nun._output import __name__ as output_module, OutputBase
@@ -84,28 +85,29 @@ class Manager:
                 add_resource(self.get_platform(scheme).get_resource(path))
         return self._resources
 
-    async def perform(self, action):
+    def perform(self, action):
         """
         Perform action on files
         """
         # Generated tasks
         # TODO: Check if up to date before generating tasks
-        files = []
-        add_file = files.append
-        for resource in self.resources:
-            async for file in resource.files:
-                task = create_task(getattr(file, action)(**self._action_kwargs))
-                file.set_task(task)  # TODO: do not store task in file
-                add_file(file)
+        files = {}
+        with ThreadPoolExecutor() as executor:
+            for resource in self.resources:
+                for file in resource.files:
+                    future = executor.submit(
+                        getattr(file, action), **self._action_kwargs)
+                    future.add_done_callback(file.set_done_callback)
+                    files[file] = future
 
         # TODO: Also show destination + action
-        progress = create_task(self._output.show_progress(files))
+        self._output.show_progress(files)
 
         # Wait for completion
         failed = []
-        for file in files:
+        for file, future in files.items():
             try:
-                await file.task
+                destinations = future.result()
             except Exception:
                 # Tasks processing exceptions are handled by output
                 if self._output and not self._debug:
@@ -115,11 +117,9 @@ class Manager:
 
             # Track changes
             if self._track:
-                new_files = file.task.result()
-                # TODO: Track changes
+                pass
+                # TODO: Track changes "destinations"
                 # TODO: remove files that where removed between previous version
-
-        await progress
 
         # Raise exception globally for all tasks
         if failed:
@@ -134,20 +134,15 @@ class Manager:
         HTTP session.
 
         Returns:
-            aiohttp.client.ClientSession: HTTP session.
+            requests.Session: HTTP session.
         """
         # Lazy import, may no always be required
         if self._http_session is None:
-            from aiohttp import ClientSession
-            self._http_session = ClientSession()
+            self._http_session = Session()
         return self._http_session
 
-    async def __aenter__(self):
+    def __enter__(self):
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb):
         clear_cache()
-        try:
-            await self._http_session.close()
-        except AttributeError:
-            pass

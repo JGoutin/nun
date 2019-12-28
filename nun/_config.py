@@ -1,3 +1,4 @@
+# coding=utf-8
 """Configuration"""
 import os
 
@@ -14,7 +15,8 @@ elif os.getuid() != 0:
     CONFIG_DIR = os.path.join(
         os.getenv('XDG_CONFIG_HOME', os.path.expanduser('~/.config')), APP_NAME)
     DATA_DIR = os.path.join(
-        os.getenv('XDG_DATA_HOME', os.path.expanduser('~/.local')), APP_NAME)
+        os.getenv('XDG_DATA_HOME', os.path.expanduser('~/.local/share')),
+        APP_NAME)
     CACHE_DIR = os.path.join(
         os.getenv('XDG_CACHE_HOME', os.path.expanduser('~/.cache')), APP_NAME)
 
