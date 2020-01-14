@@ -7,6 +7,13 @@ from nun._files import FileBase
 import tarfile
 
 
+_TYPES = {
+    tarfile.LNKTYPE: 'link',
+    tarfile.SYMTYPE: 'link',
+    tarfile.DIRTYPE: 'dir'
+}
+
+
 class File(FileBase):
     """Tar archives"""
 
@@ -18,17 +25,18 @@ class File(FileBase):
             list of nun._destination.Destination: destinations
         """
         # TODO: handle
-        #  - mode, type, linkname, uname (or uid if absent),
+        #  - mode, uname (or uid if absent),
         #    gname ( or gid if absent)
         #  - dirs, links, ...
         #  - handle tarfile.TarError
 
-        with tarfile.open(self._get()) as archive:
+        with tarfile.open(fileobj=self._get()) as archive:
             dests = []
-            extract = archive.extract
+            extractfile = archive.extractfile
             append_dest = dests.append
             set_path = self._set_path
             next_member = archive.next
+            get_type = _TYPES.get
 
             while True:
                 member = next_member()
@@ -36,9 +44,20 @@ class File(FileBase):
                     break
 
                 path = set_path(member.name)
+                member_type = get_type(member.type, 'file')
+
                 try:
-                    dest = Destination(path, mtime=member.mtime)
-                    extract(member, dest)
+                    dest = Destination(
+                        path, mtime=member.mtime, dst_type=member_type)
+
+                    if member_type == 'file':
+                        data = extractfile(member)
+                    elif member_type == 'link':
+                        data = member.linkname
+                    else:
+                        data = None
+
+                    dest.write(data)
                     dest.close()
                     append_dest(dest)
                 except CancelException:

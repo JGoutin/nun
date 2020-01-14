@@ -3,8 +3,8 @@
 Destination
 """
 from hashlib import blake2b
-from os import rename, utime, remove
-from os.path import isfile
+from os import rename, utime, remove, readlink, makedirs, symlink, fsencode
+from os.path import exists, isdir
 from shutil import copystat
 from time import time
 
@@ -34,12 +34,13 @@ class Destination:
         path (str): Destination path.
         mtime (int or float): Modification time.
         force (bool): Replace destination if exists and modified by user.
+        dst_type (str): Type of destination ("file", "dir", "link").
     """
     __slots__ = ('_path', '_hash_cur', '_hash_new', '_hash_old', '_path_part',
                  '_update', '_path_bak', '_mtime', '_force', '_hash_obj',
-                 '_file_obj')
+                 '_file_obj', '_type')
 
-    def __init__(self, path, mtime=None, force=False):
+    def __init__(self, path, mtime=None, force=False, dst_type='file'):
         # TODO:
         #  - Use SpooledTemporaryFile and freeze it on drive
         #    when self._update is True
@@ -49,6 +50,7 @@ class Destination:
         self._path_part = None
         self._path_bak = None
         self._file_obj = None
+        self._type = dst_type
 
         self._hash_cur = None
         self._hash_new = None
@@ -65,8 +67,12 @@ class Destination:
             self.cancel(f'Destination "{path}" was modified since installation')
 
         # Initialize the write sequence
-        self._path_part = self._path + '.part.nun'
-        self._file_obj = open(self._path_part, 'wb')
+        if dst_type != 'dir':
+            self._path_part = self._path + '.part.nun'
+
+        if dst_type == 'file':
+            self._file_obj = open(self._path_part, 'wb')
+
         self._hash_obj = blake2b()
 
     def __del__(self):
@@ -96,46 +102,69 @@ class Destination:
             str: Hash if file exists or empty string if not.
         """
         if self._hash_cur is None:
-            try:
-                h = blake2b()
-                with open(self._path, 'rb') as file:
-                    while True:
-                        chunk = file.read(BUFFER_SIZE)
-                        if not chunk:
-                            break
-                        h.update(chunk)
-                self._hash_cur = h.hexdigest()
+            if self._type == 'dir':
+                self._hash_cur = '0' if isdir(self._path) else ''
 
-            except FileNotFoundError:
-                self._hash_cur = ''
+            elif self._type == 'link':
+                try:
+                    data = fsencode(readlink(self.path))
+                    h = blake2b()
+                    h.update(data)
+                    self._hash_cur = h.hexdigest()
+                except FileNotFoundError:
+                    self._hash_cur = ''
+            else:
+                try:
+                    with open(self._path, 'rb') as file:
+                        h = blake2b()
+                        while True:
+                            chunk = file.read(BUFFER_SIZE)
+                            if not chunk:
+                                break
+                            h.update(chunk)
+                    self._hash_cur = h.hexdigest()
+
+                except FileNotFoundError:
+                    self._hash_cur = ''
 
         return self._hash_cur
 
-    def write(self, data):
+    def write(self, data=b''):
         """
         Write the new content into a file.
 
         Args:
             data (file-like object or bytes-like object): Data to write.
+                For links, data is the path to the link target.
+                For directories, data is ignored.
         """
-        # Content is a file-like object to fully copy to the destination
-        if hasattr(data, 'read'):
-            update_hash = self._hash_obj.update
-            write = self._file_obj.write
-            read = data.read
-            while True:
-                chunk = read(BUFFER_SIZE)
-                if not chunk:
-                    break
-                update_hash(chunk)
-                write(chunk)
+        if self._type == 'file':
+            # Content is a file-like object to fully copy to the destination
+            if hasattr(data, 'read'):
+                update_hash = self._hash_obj.update
+                write = self._file_obj.write
+                read = data.read
+                while True:
+                    chunk = read(BUFFER_SIZE)
+                    if not chunk:
+                        break
+                    update_hash(chunk)
+                    write(chunk)
 
-            self.close()
+                self.close()
 
-        # Content are bytes to append to destination
-        else:
+            # Content are bytes to append to destination
+            else:
+                self._hash_obj.update(data)
+                self._file_obj.write(data)
+
+        elif self._type == 'dir':
+            makedirs(self._path, exist_ok=True)
+
+        elif self._type == 'link':
+            data = fsencode(data)
+            symlink(data, self._path_part)
             self._hash_obj.update(data)
-            self._file_obj.write(data)
 
     def close(self):
         """
@@ -224,7 +253,7 @@ class Destination:
             self._path_part = None
 
         if self._path_bak is not None:
-            if isfile(self._path_bak):
+            if exists(self._path_bak):
                 _remove_existing(self._path_part)
                 rename(self._path_bak, self._path)
             self._path_bak = None

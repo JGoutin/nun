@@ -11,6 +11,7 @@ from dateutil.parser import parse
 from importlib import import_module
 from os import fsdecode
 from os.path import join, isdir, realpath, dirname, expanduser, isabs, splitext
+from pathlib import PurePath
 
 from nun._destination import Destination
 
@@ -185,7 +186,8 @@ class FileBase(ABC):
 
         return [dest.path]
 
-    def extract(self, output='.', trusted=False, strip_components=0):
+    def extract(self, output='.', trusted=False, strip_components=0,
+                force=False):
         """
         Extract the file.
 
@@ -196,6 +198,8 @@ class FileBase(ABC):
                 security issue if extracted from an untrusted source.
             strip_components (int): strip NUMBER leading components from file
                 path on extraction.
+            force (bool): Replace any existing destination even if modified by
+                user.
 
         Returns:
             list of str: Extracted files paths.
@@ -286,7 +290,7 @@ class FileBase(ABC):
         self._output = realpath(expanduser(fsdecode(output)))
 
     def _set_path(self, path, target_is_dir=False,
-                  strip_components=0):
+                  strip_components=None):
         """
         Set final destination path.
 
@@ -299,8 +303,11 @@ class FileBase(ABC):
         Returns:
             str: Destination absolute path.
         """
-        # TODO:
-        #  - strip_components
+        if strip_components is None:
+            strip_components = self._strip_components
+
+        if strip_components:
+            path = str(PurePath(*PurePath(path).parts[strip_components:]))
 
         # Ensure path is not outside output directory for untrusted sources
         absolute = isabs(path)

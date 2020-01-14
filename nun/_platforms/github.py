@@ -358,12 +358,13 @@ class Resource(ResourceBase):
 
         return self._ref_hash
 
-    def _get_files(self):
+    @property
+    def files(self):
         """
         Files of this resource.
 
         Returns:
-            generator of tuple: name, url.
+            generator of nun._files.FileBase: Files.
         """
         # TODO:
         #  - Pass ref time as file mtime
