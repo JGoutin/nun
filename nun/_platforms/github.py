@@ -304,7 +304,7 @@ class Resource(ResourceBase):
         resource_id (str): Resource ID.
     """
     __slots__ = ('_github_api', '_owner', '_repo', '_ref_name',
-                 '_ref_type', '_ref_info', '_ref_hash', '_ref_assets', '_res')
+                 '_ref_hash', '_ref_assets', '_res')
 
     def __init__(self, platform, resource_id):
         ResourceBase.__init__(self, platform, resource_id)
@@ -313,32 +313,8 @@ class Resource(ResourceBase):
         self._owner, self._repo, self._ref_name, self._res = \
             self._platform._parse_resource_id(resource_id)
 
-        self._ref_type = None
-        self._ref_info = None
         self._ref_hash = None
         self._ref_assets = None
-
-    @property
-    def info(self):
-        """
-        Reference information.
-
-        Returns:
-            dict: Information.
-        """
-        # Special case of reference set to latest branch by default
-        if self._ref_info is None and self._ref_type == 'branch':
-            resp, status = self._github_api(
-                f'/repos/{self._owner}/{self._repo}/branches/{self._ref_name}')
-            self.exception_handler(status=status)
-            self._ref_info = resp
-
-        # Requires full update in any other cases
-        elif self._ref_info is None:
-            self._update_reference()
-
-        # TODO: Filter useful information
-        return self._ref_info
 
     @property
     def version(self):
@@ -366,11 +342,8 @@ class Resource(ResourceBase):
         Returns:
             generator of nun._files.FileBase: Files.
         """
-        # TODO:
-        #  - Pass ref time as file mtime
-
-        # Ensure reference name is set
-        self._update_reference_name()
+        # Get reference information
+        self._get_reference()
 
         # Archives
         if self._res in ('zipball', 'tarball'):
@@ -387,17 +360,16 @@ class Resource(ResourceBase):
             return
 
         # Release assets
-        if self._ref_assets is None:
-            self._update_reference()
-
-        yield_assets = False
-        for asset in self._ref_assets:
-            if fnmatch(asset['name'], self._res):
-                yield create_file(
-                    asset['name'], asset['browser_download_url'], self)
-                yield_assets = True
-        if yield_assets:
-            return
+        if self._ref_assets:
+            yield_assets = False
+            for asset in self._ref_assets:
+                if fnmatch(asset['name'], self._res):
+                    yield create_file(
+                        asset['name'], asset['browser_download_url'], self,
+                        mtime=asset['updated_at'])
+                    yield_assets = True
+            if yield_assets:
+                return
 
         # Raw file
         # TODO: Get Git tree and apply fnmatch on it
@@ -423,76 +395,103 @@ class Resource(ResourceBase):
             self._owner, self._repo, self._ref_name, res_name or self._res,
             status=status)
 
-    def _update_reference_name(self):
+    def _get_reference(self):
         """
         Reference.
         """
-        if self._ref_name:
-            return
-        # If not specified, default to the latest version
-
-        # Get latest stable GitHub release
-        resp, status = self._github_api(
-            f'/repos/{self._owner}/{self._repo}/releases/latest')
-        if status != 404:
-            self._ref_type = 'release'
-            self._ref_name = resp['tag_name']
-            self._ref_assets = resp['assets']
-            self._ref_info = resp
-
-        # If no release, Get default Git branch
-        else:
-            resp, status = self._github_api(
-                f'/repos/{self._owner}/{self._repo}')
-            self.exception_handler(status=status)
-            self._ref_type = 'branch'
-            self._ref_assets = ()
-            self._ref_name = resp['default_branch']
-
-    def _update_reference(self):
-        """
-        Update reference type, info and assets.
-        """
-        # Ensure reference name is set
-        self._update_reference_name()
-
         # Assume that reference is a GitHub release
-        resp, status = self._github_api(
-            f'/repos/{self._owner}/{self._repo}/releases/tags/{self._ref_name}')
-        if status != 404:
-            self._ref_type = 'release'
-            self._ref_assets = resp['assets']
-            self._ref_info = resp
+        if self._get_release():
             return
 
         # Assume that reference is a Git branch
-        resp, status = self._github_api(
-            f'/repos/{self._owner}/{self._repo}/branches/{self._ref_name}')
-        if status != 404:
-            self._ref_type = 'branch'
-            self._ref_assets = ()
-            self._ref_hash = resp['commit']['sha']
-            self._ref_info = resp
+        elif self._get_branch():
             return
 
+        # If still no ref_name at this step, does not exist
+        elif not self._ref_name:
+            self.exception_handler()
+
         # Assume that reference is a Git tag
-        resp, status = self._github_api(
-            f'/repos/{self._owner}/{self._repo}/git/refs/tags/{self._ref_name}')
-        if status != 404:
-            self._ref_type = 'tag'
-            self._ref_assets = ()
-            self._ref_hash = resp['object']['sha']
-            self._ref_info = resp
+        elif self._get_tag():
             return
 
         # Assume that reference is a Git commit
+        elif self._get_commit():
+            return
+
+        # Does not exist
+        self.exception_handler()
+
+    def _get_branch(self):
+        """
+        Get reference as a branch.
+
+        Returns:
+            bool: True if reference is a branch.
+        """
+        if not self._ref_name:
+            resp, status = self._github_api(
+                f'/repos/{self._owner}/{self._repo}')
+            if status == 404:
+                return False
+            self._ref_name = resp['default_branch']
+
+        resp, status = self._github_api(
+            f'/repos/{self._owner}/{self._repo}/branches/{self._ref_name}')
+        if status != 404:
+            self._ref_hash = resp['commit']['sha']
+            self._mtime = resp['commit']['commit']['committer']['date']
+            return True
+        return False
+
+    def _get_commit(self):
+        """
+        Get reference as a commit.
+
+        Returns:
+            bool: True if reference is a commit.
+        """
         resp, status = self._github_api(
             f'/repos/{self._owner}/{self._repo}/commits/{self._ref_name}')
         if status != 404:
-            self._ref_type = 'commit'
-            self._ref_assets = ()
             self._ref_hash = resp['sha']
-            self._ref_info = resp
-            return
+            self._mtime = resp['commit']['committer']['date']
+            return True
+        return False
 
-        self.exception_handler()
+    def _get_release(self):
+        """
+        Get reference as a release.
+
+        Returns:
+            bool: True if reference is a release.
+        """
+        if self._ref_name:
+            url = (f'/repos/{self._owner}/{self._repo}/releases/tags/'
+                   f'{self._ref_name}')
+        else:
+            # Get latest stable release if no reference specified
+            url = f'/repos/{self._owner}/{self._repo}/releases/latest'
+
+        resp, status = self._github_api(url)
+        if status != 404:
+            self._ref_name = resp['tag_name']
+            self._ref_assets = resp['assets']
+            self._mtime = resp['published_at']
+            return True
+        return False
+
+    def _get_tag(self):
+        """
+        Get reference as a tag.
+
+        Returns:
+            bool: True if reference is a tag.
+        """
+        resp, status = self._github_api(
+            f'/repos/{self._owner}/{self._repo}/git/tags/{self._ref_name}')
+        if status != 404:
+            self._ref_hash = resp['object']['sha']
+            self._mtime = resp['tagger']['date']
+            return True
+        return False

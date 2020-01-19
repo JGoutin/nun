@@ -138,11 +138,12 @@ class ResourceBase(ABC):
         platform (nun._platforms.PlatformBase subclass instance): Platform
         resource_id (str): Resource ID.
     """
-    __slots__ = ('_platform', '_resource_id')
+    __slots__ = ('_platform', '_resource_id', '_mtime')
 
     def __init__(self, platform, resource_id):
         self._platform = platform
         self._resource_id = resource_id
+        self._mtime = None
 
     @property
     def platform(self):
@@ -165,14 +166,14 @@ class ResourceBase(ABC):
         return self._resource_id
 
     @property
-    @abstractmethod
-    def info(self):
+    def mtime(self):
         """
-        Reference information.
+        Modification time.
 
         Returns:
-            dict: Information.
+            int or float or str or None: Modification time.
         """
+        return self._mtime
 
     @property
     @abstractmethod

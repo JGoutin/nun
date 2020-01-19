@@ -67,7 +67,7 @@ class FileBase(ABC):
         name (str): File name.
         url (str): URL.
         resource (nun._platforms.ResourceBase subclass instance): Resource.
-        mtime (int or float): Modification timestamp.
+        mtime (int or float or str): Modification time or timestamp.
         strip_components (int): strip NUMBER leading components from file
             path when extracting an archive.
     """
@@ -83,12 +83,17 @@ class FileBase(ABC):
         self._done = False
         self._exception = None
         self._content_type = None
-        self._mtime = mtime
         self._etag = None
         self._accept_range = False
         self._output = None
         self._strip_components = strip_components
         self._trusted = False
+
+        if mtime is None:
+            mtime = resource.mtime
+        if isinstance(mtime, str):
+            mtime = parse(mtime).timestamp()
+        self._mtime = mtime
 
         # For progress information
         self._size = 0
@@ -303,6 +308,7 @@ class FileBase(ABC):
         Returns:
             str: Destination absolute path.
         """
+        # TODO: use PurePath everywhere
         if strip_components is None:
             strip_components = self._strip_components
 
