@@ -167,7 +167,7 @@ class Platform(PlatformBase):
                         ' Authenticate with your GitHub account to increase the'
                         ' rate limit.')
                     # TODO: explain how use GitHub account
-                self._manager.output.warn(msg)
+                self._manager.path.warn(msg)
                 self._RATE_LIMIT_WARNED |= True
 
             # Wait until rate limit API return remaining > 0

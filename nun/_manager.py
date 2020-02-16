@@ -100,10 +100,9 @@ class Manager:
                     future.add_done_callback(file.set_done_callback)
                     files[file] = future
 
-        # TODO: Also show destination + action
-        self._output.show_progress(files)
+            # Wait for completion and show progress
+            self._output.show_progress(files)
 
-        # Wait for completion
         failed = []
         for file, future in files.items():
             try:

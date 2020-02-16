@@ -113,7 +113,8 @@ class Output(OutputBase):
                         f' {file.exception}')
                 else:
                     self.info(
-                        f' - Completed: {file.resource_id}, {file.name},'
+                        f' - Completed: "{file.resource_id}"'
+                        f' has been {file.status},'
                         f' {size:>5.1f} {size_unit:>2}')
 
             # Set approximate progress information

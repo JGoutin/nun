@@ -1,10 +1,11 @@
 # coding=utf-8
 """Tar archives"""
 
+import tarfile
+
 from nun._destination import Destination
 from nun._exceptions import CancelException
 from nun._files import FileBase
-import tarfile
 
 
 _TYPES = {
@@ -25,9 +26,7 @@ class File(FileBase):
             list of nun._destination.Destination: destinations
         """
         # TODO: handle
-        #  - mode, uname (or uid if absent),
-        #    gname ( or gid if absent)
-        #  - dirs, links, ...
+        #  - mode, uname (or uid if absent), gname ( or gid if absent)
         #  - handle tarfile.TarError
 
         with tarfile.open(fileobj=self._get()) as archive:

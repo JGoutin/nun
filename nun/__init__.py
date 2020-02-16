@@ -17,15 +17,38 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-__version__ = '1.0.0'
+__version__ = '1.0.0-alpha.1'
 
 # TODO:
-# - Provides packages: WHL, DEB, RPM, chocolatey, Inno setup, exe zip
-# - Vendor dependencies if not packaged.
-# - Qt GUI
-# - Database: store resource, all generated files
-#   On install/extract/download check files and remove files that does not
-#   exists with new version.
+#  - Support formats: deb, rpm, whl, gz, xz, bz2
+#  - Allow user to select file type to use
+#  - Provides packages: WHL, DEB, RPM, chocolatey, Inno setup, exe zip
+#  - Vendor dependencies if not packaged.
+#  - Qt GUI
+#  - Database: store resource, all generated files
+#    On install/extract/download check files and remove files that does not
+#    exists with new version.
+#  - install args:
+#    --cmd: install command to use, set default for some formats like deb
+#    --exec: File itself is an executable file (May be zipped), to install in
+#           "bin" with chmod +x
+#  - download args:
+#    --mode: Set file mode
+#  - extract args:
+#    --???: Create subdir with archive name
+#  - install/download/extract common args:
+#    --hash: Hash to check, "auto" to try to find from hash file, ...
+#    --verify: Verify signature, like hash.
+#  - Other commands:
+#    update: update installed
+#    list: list installed
+#    info: info on installed
+#    check: Files integrity check
+#    remove: uninstall
+#  - build before install feature (make, ...)
+#  - install should also detect archives with unix structure and install it
+#  - Get file URL from requests in json result
+#  - Use Airfs as backend.
 
 from nun._manager import Manager as _Manager
 

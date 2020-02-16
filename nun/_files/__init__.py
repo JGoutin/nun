@@ -1,13 +1,8 @@
 # coding=utf-8
 """Files & packages formats"""
-# TODO:
-#  - Support formats: deb, rpm, whl, gz, xz, bz2
-#  - Allow user to select file type to use
-#  - Get from db and update db
-
-
 from abc import ABC
 from dateutil.parser import parse
+import hashlib
 from importlib import import_module
 from os import fsdecode
 from os.path import join, isdir, realpath, dirname, expanduser, isabs, splitext
@@ -73,7 +68,7 @@ class FileBase(ABC):
     """
     __slots__ = ('_name', '_url', '_resource', '_request', '_size',
                  '_size_done', '_done', '_exception', '_mtime', '_etag',
-                 '_accept_range', '_output', '_trusted')
+                 '_accept_range', '_output', '_trusted', '_status')
 
     def __init__(self, name, url, resource, mtime=None, strip_components=0):
         self._name = name
@@ -88,6 +83,7 @@ class FileBase(ABC):
         self._output = None
         self._strip_components = strip_components
         self._trusted = False
+        self._status = ''
 
         if mtime is None:
             mtime = resource.mtime
@@ -98,6 +94,11 @@ class FileBase(ABC):
         # For progress information
         self._size = 0
         self._size_done = 0
+
+        # File hash, "hash_obj.update" will be used as callback
+        # TODO: hash init with hashlib.new, depending the algo to use for
+        #       comparison
+        self.hash_obj = None
 
     @property
     def name(self):
@@ -150,6 +151,27 @@ class FileBase(ABC):
         return self._done
 
     @property
+    def digest(self):
+        """
+        File digest.
+
+        Returns:
+            str: Digest
+        """
+        if self.hash_obj:
+            return self.hash_obj.hexdigest()
+
+    @property
+    def status(self):
+        """
+        File final status.
+
+        Returns:
+            str: status
+        """
+        return self._status
+
+    @property
     def exception(self):
         """
         Exception that occurred during operation if any.
@@ -169,6 +191,15 @@ class FileBase(ABC):
         self._done = True
         self._exception = future.exception()
 
+    def add_size_callback(self, size):
+        """
+        Callback to update file size completed.
+
+        Args:
+            size (int):
+        """
+        self._size_done += size
+
     def download(self, output='.', force=False):
         """
         Download the file.
@@ -181,14 +212,15 @@ class FileBase(ABC):
             list of str: Downloaded files paths.
         """
         self._set_output(output)
+        path = self._set_path(self._name, strip_components=0)
 
         # Force strip_components=0 on a single file
-        with Destination(self._set_path(self._name, strip_components=0),
-                         force=force) as dest:
+        with Destination(path, force=force) as dest:
             dest.write(self._get())
             dest.move(self._mtime)
             dest.clear()
 
+        self._status = f'downloaded to "{path}"'
         return [dest.path]
 
     def extract(self, output='.', trusted=False, strip_components=0,
@@ -223,6 +255,7 @@ class FileBase(ABC):
         for dest in destinations:
             dest.clear()
 
+        self._status = f'extracted to "{self._output}"'
         return [dest.path for dest in destinations]
 
     def _extract(self):
@@ -235,6 +268,16 @@ class FileBase(ABC):
         raise NotImplementedError(f'extracting {self._name} is not supported.')
 
     def install(self):
+        """
+        Install the file.
+
+        Returns:
+            list of str: Installed files paths.
+        """
+        self._install()
+        self._status = 'installed'
+
+    def _install(self):
         """
         Install the file.
 
@@ -278,12 +321,7 @@ class FileBase(ABC):
         except (KeyError, IndexError):
             pass
 
-        # TODO: Adapt result file object to
-        #  - update "self._size_done" while reading
-        #  - Parallel download (if self._accept_range)
-        #  - Signature/digest verification
-        #  - Cache content locally and add "seek" support
-        return resp.raw
+        return Body(resp, self)
 
     def _set_output(self, output):
         """
@@ -342,3 +380,57 @@ class FileBase(ABC):
 
         # This directory is a new sub-directory
         return self._output
+
+
+class Body:
+    """
+    Body file like object
+
+    Args:
+        response (requests.Response): Response.
+        file (nun._files.FileBase): File.
+    """
+    __slots__ = ('_response', '_add_size', '_read', '_update_hash', '_file')
+
+    def __init__(self, response, file):
+        self._response = response
+        self._file = file
+
+        # Common functions
+        self._add_size = file.add_size_callback
+        self._read = self._response.raw.read
+        if file.hash_obj is not None:
+            self._update_hash = file.hash_obj.update
+        else:
+            self._update_hash = None
+
+    def read(self, size=-1):
+        """
+        Read body.
+
+        Args:
+            size (int):
+
+        Returns:
+            bytes: Read data.
+        """
+        # Read data
+        chunk = self._read(None if size == -1 else size, decode_content=True)
+
+        # Update downloaded size
+        self._add_size(len(chunk))
+
+        # Compute hash
+        if self._update_hash:
+            self._update_hash(chunk)
+
+        return chunk
+
+    def tell(self):
+        """
+        Return current read position.
+
+        Returns:
+            int: Position.
+        """
+        return self._file.size_done
