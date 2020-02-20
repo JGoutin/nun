@@ -1,53 +1,66 @@
 """Platforms"""
-# TODO:
-#  - bitbucket
-#  - gitlab
-#  - git (Any git over internet)
-#  - http (any single file over internet)
-#  - + File from a link inside a JSON request
 
 from abc import ABC, abstractmethod
 from json import load, dump
+from importlib import import_module
 from os.path import join
+from threading import Lock
+
+from requests import Session
 
 from nun._config import CONFIG_DIR
+
+_PLATFORMS = dict()
+_PLATFORMS_LOCK = Lock()
+
+
+def get_files(resource, task_id):
+    """
+    Get files of a resource.
+
+    Args:
+        resource (str): Resource.
+        task_id (int): Task ID.
+
+    Returns:
+        list of nun._files.FileBase subclass instance: Files
+    """
+    scheme, path = resource.split('://', 1)
+
+    with _PLATFORMS_LOCK:
+        # Get cached platform
+        try:
+            platform = _PLATFORMS[scheme]
+
+        # Or, instantiate the platform and cache it
+        except KeyError:
+            platform = _PLATFORMS[scheme] = import_module(
+                f'{__name__}.{scheme}').Platform()
+
+    # Get files
+    return platform.get_files(path, task_id)
 
 
 class PlatformBase(ABC):
     """
     Platform base class.
-
-    Args:
-        manager (nun._manager.Manager): HTTP session.
     """
-    __slots__ = ('_manager', '_http_request')
+    __slots__ = ('_http_request', '_http_session')
 
-    def __init__(self, manager):
-        self._manager = manager
-        self._http_request = None
-
-    @abstractmethod
-    def get_resource(self, resource_id):
-        """
-        Resource.
-
-        Args:
-            resource_id (str): Resource ID.
-
-        Returns:
-            nun._platforms.ResourceBase subclass instance: Resource
-        """
+    def __init__(self):
+        self._http_session = Session()
+        self._http_request = self._http_session.request
 
     @abstractmethod
-    def autocomplete(self, partial_resource_id):
+    def autocomplete(self, partial_resource):
         """
         Autocomplete resource ID.
 
         Args:
-            partial_resource_id (str): Partial resource ID.
+            partial_resource (str): Partial resource.
 
         Returns:
-            list of str: Resource ID candidates.
+            list of str: Resource candidates.
         """
 
     def request(self, url, method='GET', ignore_status=None, **kwargs):
@@ -64,9 +77,6 @@ class PlatformBase(ABC):
         Returns:
             requests.Response: Response.
         """
-        if self._http_request is None:
-            self._http_request = self._manager.http_session.request
-
         # TODO: Add automatic retries for common return codes (
         #       408, 500, 502, 504)
         response = self._http_request(method, url, **kwargs)
@@ -129,81 +139,41 @@ class PlatformBase(ABC):
                 dump(store, store_json)
             return
 
-
-class ResourceBase(ABC):
-    """
-    Platform base class.
-
-    Args:
-        platform (nun._platforms.PlatformBase subclass instance): Platform
-        resource_id (str): Resource ID.
-    """
-    __slots__ = ('_platform', '_resource_id', '_mtime')
-
-    def __init__(self, platform, resource_id):
-        self._platform = platform
-        self._resource_id = resource_id
-        self._mtime = None
-
-    @property
-    def platform(self):
+    def get_files(self, resource, task_id):
         """
-        Platform.
+        Get files of a specific resource.
+
+        Args:
+            resource (str): Resource.
+            task_id (int): Task ID.
 
         Returns:
-            nun._platforms.PlatformBase subclass instance: Platform
+            list of nun._files.FileBase: Files.
         """
-        return self._platform
+        return list(self._get_files(resource, task_id))
 
-    @property
-    def resource_id(self):
-        """
-        Resource ID.
-
-        Returns:
-            str: Resource ID.
-        """
-        return self._resource_id
-
-    @property
-    def mtime(self):
-        """
-        Modification time.
-
-        Returns:
-            int or float or str or None: Modification time.
-        """
-        return self._mtime
-
-    @property
     @abstractmethod
-    def version(self):
+    def _get_files(self, resource, task_id):
         """
-        Resource version.
+        Get files of a specific resource.
 
-        Returns:
-            str: Version.
-        """
-
-    @property
-    @abstractmethod
-    def files(self):
-        """
-        Files of this resource.
+        Args:
+            resource (str): Resource.
+            task_id (int): Task ID.
 
         Returns:
             generator of nun._files.FileBase: Files.
         """
 
     @abstractmethod
-    def exception_handler(self, status=404, res_name=None):
+    def exception_handler(self, resource, name=None, status=404):
         """
         Handle exception to return clear error message.
 
         Args:
+            resource (str): Resource ID.
             status (int): Status code. Default to 404.
-            res_name (str): Resource name. If not specified, use stored resource
-                name.
+            name (str): Resource name override
 
         Raises:
             FileNotFoundError: Not found.

@@ -1,8 +1,26 @@
 # coding=utf-8
 """Outputs"""
+from importlib import import_module
 
 # Bytes units
 _UNITS = ('B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB')
+
+
+def get_output(name):
+    """
+    Get output
+
+    Args:
+        name (str) Output name.
+
+    Returns:
+        nun._output.OutputBase subclass: output.
+    """
+    if name:
+        return import_module(f'{__name__}.{name}').Output()
+
+    # No output
+    return OutputBase()
 
 
 class OutputBase:

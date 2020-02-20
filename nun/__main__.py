@@ -28,10 +28,8 @@ def _run_command():
     description = 'Download.'
     action = sub_parsers.add_parser(
         'download', help=description, description=description)
-    action.add_argument('resources_ids', nargs='*', help='Packages ID.')
+    action.add_argument('resources', nargs='*', help='Resources.')
     action.add_argument('--output', '-o', help='Output directory.', default='.')
-    action.add_argument('--no_track', '-n', help='Does not track.',
-                        action='store_true')
     action.add_argument('--force', '-f', help='Always replace destination.',
                         action='store_true')
 
@@ -39,10 +37,8 @@ def _run_command():
     description = 'Extract archives.'
     action = sub_parsers.add_parser(
         'extract', help=description, description=description)
-    action.add_argument('resources_ids', nargs='*', help='Packages ID.')
+    action.add_argument('resources', nargs='*', help='Resources.')
     action.add_argument('--output', '-o', help='Output directory.', default='.')
-    action.add_argument('--no_track', '-n', help='Does not track.',
-                        action='store_true')
     action.add_argument('--trusted',
                         help='Allow extraction of files outside of the '
                              'output directory.',
@@ -57,28 +53,26 @@ def _run_command():
     description = 'Install packages.'
     action = sub_parsers.add_parser(
         'install', help=description, description=description)
-    action.add_argument('resources_ids', nargs='*', help='Packages ID.')
-    action.add_argument('--no_track', '-n', help='Does not track.',
-                        action='store_true')
+    action.add_argument('resources', nargs='*', help='Resources.')
 
     # Parser: "nun update"
     description = 'Update packages.'
     action = sub_parsers.add_parser(
         'update', help=description, description=description)
-    action.add_argument('resources_ids', nargs='*', help='Packages ID.')
+    action.add_argument('resources', nargs='*', help='Resources.')
 
     # Parser: "nun remove"
-    # TODO: Autocomplete resource_id from tracked
+    # TODO: Autocomplete resource from tracked
     description = 'Remove and un-track packages.'
     action = sub_parsers.add_parser(
         'remove', help=description, description=description)
-    action.add_argument('resources_ids', nargs='*', help='Packages ID.')
+    action.add_argument('resources', nargs='*', help='Resources.')
 
     # Parser: "nun info"
     description = 'Information about package.'
     action = sub_parsers.add_parser(
         'info', help=description, description=description)
-    action.add_argument('resources_ids', nargs='*', help='Packages ID.')
+    action.add_argument('resources', nargs='*', help='Resources.')
 
     # Parser: "nun list"
     description = 'List packages.'

@@ -49,48 +49,48 @@ __version__ = '1.0.0-alpha.1'
 #  - install should also detect archives with unix structure and install it
 #  - Get file URL from requests in json result
 #  - Use Airfs as backend.
+#  - platform: bitbucket
+#  - platform: gitlab
+#  - platform: git (Any git over internet)
+#  - platform: http (any single file over internet)
 
 from nun._manager import Manager as _Manager
 
 
-def _perform(action, resources_ids, **kwargs):
+def _perform(action, resources, **kwargs):
     """
     Perform action.
 
     Args:
         action (str): Action method.
-        resources_ids (iterable of str): Resources ID.
+        resources (iterable of str): Resources ID.
     """
-    with _Manager(resources_ids, **kwargs) as manager:
-        manager.perform(action)
+    with _Manager(resources, action, **kwargs) as manager:
+        manager.perform()
 
 
-def download(resources_ids, output='.', no_track=False, debug=False,
-             force=False):
+def download(resources, output='.', debug=False, force=False):
     """
     Download.
 
     Args:
-        resources_ids (iterable of str): Resources ID.
+        resources (iterable of str): Resources ID.
         output (path-like object): Destination.
-        no_track (bool): If True, does not track file.
         debug (bool): If True, show full error traceback and stop on first
                       error.
         force (bool): Replace any existing destination even if modified by user.
     """
-    _perform('download', resources_ids, output=output, no_track=no_track,
-             debug=debug, force=force)
+    _perform('download', resources, output=output, debug=debug, force=force)
 
 
-def extract(resources_ids, output='.', no_track=False, debug=False,
-            trusted=False, strip_components=0, force=False):
+def extract(resources, output='.', debug=False, trusted=False,
+            strip_components=0, force=False):
     """
     Extract.
 
     Args:
-        resources_ids (iterable of str): Resources ID.
+        resources (iterable of str): Resources ID.
         output (path-like object): Destination.
-        no_track (bool): If True, does not track file.
         debug (bool): If True, show full error traceback and stop on first
                       error.
         trusted (bool): If True, allow extraction of files outside of the
@@ -100,6 +100,5 @@ def extract(resources_ids, output='.', no_track=False, debug=False,
             path on extraction.
         force (bool): Replace any existing destination even if modified by user.
     """
-    _perform('extract', resources_ids, output=output, no_track=no_track,
-             debug=debug, trusted=trusted,
+    _perform('extract', resources, output=output, debug=debug, trusted=trusted,
              strip_components=strip_components, force=force)

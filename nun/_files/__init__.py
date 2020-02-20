@@ -2,13 +2,13 @@
 """Files & packages formats"""
 from abc import ABC
 from dateutil.parser import parse
-import hashlib
 from importlib import import_module
 from os import fsdecode
 from os.path import join, isdir, realpath, dirname, expanduser, isabs, splitext
 from pathlib import PurePath
 
 from nun._destination import Destination
+from nun._database import DB
 
 #: File types aliases
 ALIASES = {
@@ -19,20 +19,23 @@ ALIASES = {
 }
 
 
-def create_file(name, url, resource, file_type=None, mtime=None,
-                strip_components=0):
+def create_file(name, url, resource, platform, task_id, file_type=None,
+                mtime=None, strip_components=0, revision=None):
     """
     Args:
         name (str): File name.
         url (str): URL.
         resource (nun._platforms.ResourceBase subclass instance): Resource.
+        platform (nun._platforms.PlatformBase subclass): platform
+        task_id (int): Task ID.
         file_type (str): File type to use if known in advance.
         mtime (int or float): Modification timestamp.
         strip_components (int): strip NUMBER leading components from file
             path when extracting an archive.
+        revision (str): File revision.
 
     Returns:
-        FileBase subclass instance: File
+        nun._files.FileBase subclass instance: File
     """
     # Detect file type based on its extension
     if file_type is None:
@@ -50,8 +53,8 @@ def create_file(name, url, resource, file_type=None, mtime=None,
     except ImportError:
         cls = FileBase
 
-    return cls(name, url, resource, mtime=mtime,
-               strip_components=strip_components)
+    return cls(name, url, resource, platform, task_id, mtime=mtime,
+               strip_components=strip_components, revision=revision)
 
 
 class FileBase(ABC):
@@ -61,32 +64,36 @@ class FileBase(ABC):
     Args:
         name (str): File name.
         url (str): URL.
-        resource (nun._platforms.ResourceBase subclass instance): Resource.
+        resource (str): Resource.
+        platform (nun._platforms.PlatformBase subclass): platform
+        task_id (int): Task ID.
         mtime (int or float or str): Modification time or timestamp.
         strip_components (int): strip NUMBER leading components from file
             path when extracting an archive.
+        revision (str): File revision.
     """
-    __slots__ = ('_name', '_url', '_resource', '_request', '_size',
-                 '_size_done', '_done', '_exception', '_mtime', '_etag',
-                 '_accept_range', '_output', '_trusted', '_status')
+    __slots__ = ('_name', '_url', '_resource', '_size', '_task_id',
+                 '_size_done', '_done', '_exception', '_mtime', '_revision',
+                 '_output', '_trusted', '_platform', '_db_info',
+                 '_destinations')
 
-    def __init__(self, name, url, resource, mtime=None, strip_components=0):
+    def __init__(self, name, url, resource, platform, task_id,
+                 mtime=None, strip_components=0, revision=None):
+
         self._name = name
         self._url = url
         self._resource = resource
-        self._request = self._resource.platform.request
+        self._platform = platform
         self._done = False
         self._exception = None
-        self._content_type = None
-        self._etag = None
-        self._accept_range = False
         self._output = None
         self._strip_components = strip_components
         self._trusted = False
-        self._status = ''
+        self._task_id = task_id
+        self._db_info = DB.get_file(task_id, name)
+        self._revision = self._get_revision(revision)
+        self._destinations = None
 
-        if mtime is None:
-            mtime = resource.mtime
         if isinstance(mtime, str):
             mtime = parse(mtime).timestamp()
         self._mtime = mtime
@@ -94,11 +101,6 @@ class FileBase(ABC):
         # For progress information
         self._size = 0
         self._size_done = 0
-
-        # File hash, "hash_obj.update" will be used as callback
-        # TODO: hash init with hashlib.new, depending the algo to use for
-        #       comparison
-        self.hash_obj = None
 
     @property
     def name(self):
@@ -111,14 +113,14 @@ class FileBase(ABC):
         return self._name
 
     @property
-    def resource_id(self):
+    def resource(self):
         """
-        File resource ID
+        File resource
 
         Returns:
-            str: ID.
+            str: resource.
         """
-        return self._resource.resource_id
+        return self._resource
 
     @property
     def size(self):
@@ -151,27 +153,6 @@ class FileBase(ABC):
         return self._done
 
     @property
-    def digest(self):
-        """
-        File digest.
-
-        Returns:
-            str: Digest
-        """
-        if self.hash_obj:
-            return self.hash_obj.hexdigest()
-
-    @property
-    def status(self):
-        """
-        File final status.
-
-        Returns:
-            str: status
-        """
-        return self._status
-
-    @property
     def exception(self):
         """
         Exception that occurred during operation if any.
@@ -180,6 +161,57 @@ class FileBase(ABC):
             None or Exception subclass: Exception.
         """
         return self._exception
+
+    @property
+    def destinations(self):
+        """
+        Destinations IDs.
+
+        Returns:
+            None or set of int: Destinations IDs. If None,
+                the file and its destinations are unchanged.
+        """
+        return self._destinations
+
+    def _cancel(self, update, force):
+        """
+        Return True if cancel the operation.
+
+        Args:
+            update (bool): True if it is an update operation.
+            force (bool): True if operation is forced to run.
+
+        Returns:
+            bool: True if cancelled.
+        """
+        if (update and not force and self._db_info is not None and
+                self._revision == self._db_info.revision):
+            self._destinations = True
+            return True
+        return False
+
+    def _get_revision(self, revision):
+        """
+        Get a default revision from headers if not specified.
+
+        Args:
+            revision (str or None): revision
+
+        Returns:
+            str: revision
+        """
+        if revision is not None:
+            return revision
+
+        resp = self._platform.request(self._url, method='HEAD')
+        self._platform.exception_handler(
+            self._resource, self._name, resp.status_code)
+        headers = resp.headers
+        etag = headers.get('ETag')
+        if etag and not etag.startswith('W/'):
+            return etag
+        else:
+            return headers.get('Last-Modified')
 
     def set_done_callback(self, future):
         """
@@ -200,17 +232,55 @@ class FileBase(ABC):
         """
         self._size_done += size
 
-    def download(self, output='.', force=False):
+    @property
+    def file_id(self):
+        """
+        File ID in database.
+
+        Returns:
+            int: File ID.
+        """
+        return self._db_info['id']
+
+    def _db_update(self, transaction_id, destinations=None):
+        """
+        Update the file in the database.
+
+        Args:
+            destinations (iterable of nun._destination.Destination):
+                destinations.
+        """
+        # Update the file in the database
+        file_id = DB.set_file(
+            transaction_id, ref_values=self._db_info,
+            transaction_id=transaction_id, task_id=self._task_id,
+            name=self._name, revision=self._revision, size=self._size)
+
+        # Update destinations in the database
+        if destinations:
+            self._destinations = set()
+            add = self._destinations.add
+            kwargs = dict(transaction_id=transaction_id,
+                          task_id=self._task_id, file_id=file_id)
+            for dest in destinations:
+                add(dest.db_update(**kwargs))
+
+    def download(self, output='.', force=False, update=False,
+                 transaction_id=None):
         """
         Download the file.
 
         Args:
             output (path-like object): Destination.
-            force (bool): Replace destination if exists and modified by user.
-
-        Returns:
-            list of str: Downloaded files paths.
+            force (bool): Force update and replace any existing destination even
+                if modified by user.
+            update (bool): If True, is an update of an already in the database
+                entry.
+            transaction_id (int): Transaction ID.
         """
+        if self._cancel(update, force):
+            return
+
         self._set_output(output)
         path = self._set_path(self._name, strip_components=0)
 
@@ -220,11 +290,10 @@ class FileBase(ABC):
             dest.move(self._mtime)
             dest.clear()
 
-        self._status = f'downloaded to "{path}"'
-        return [dest.path]
+        self._db_update(transaction_id, (dest,))
 
     def extract(self, output='.', trusted=False, strip_components=0,
-                force=False):
+                force=False, update=False, transaction_id=None):
         """
         Extract the file.
 
@@ -235,12 +304,15 @@ class FileBase(ABC):
                 security issue if extracted from an untrusted source.
             strip_components (int): strip NUMBER leading components from file
                 path on extraction.
-            force (bool): Replace any existing destination even if modified by
-                user.
-
-        Returns:
-            list of str: Extracted files paths.
+            force (bool): Force update and replace any existing destination even
+                if modified by user.
+            update (bool): If True, is an update of an already in the database
+                entry.
+            transaction_id (int): Transaction ID.
         """
+        if self._cancel(update, force):
+            return
+
         self._trusted = trusted
         self._set_output(output)
         if strip_components is not 0:
@@ -255,8 +327,7 @@ class FileBase(ABC):
         for dest in destinations:
             dest.clear()
 
-        self._status = f'extracted to "{self._output}"'
-        return [dest.path for dest in destinations]
+        self._db_update(transaction_id, (destinations,))
 
     def _extract(self):
         """
@@ -267,22 +338,26 @@ class FileBase(ABC):
         """
         raise NotImplementedError(f'extracting {self._name} is not supported.')
 
-    def install(self):
+    def install(self, force=False, update=False, transaction_id=None):
         """
         Install the file.
 
-        Returns:
-            list of str: Installed files paths.
+        Args:
+            force (bool): Force update and replace any existing destination even
+                if modified by user.
+            update (bool): If True, is an update of an already in the database
+                entry.
+            transaction_id (int): Transaction ID.
         """
+        if self._cancel(update, force):
+            return
+
         self._install()
-        self._status = 'installed'
+        self._db_update(transaction_id)
 
     def _install(self):
         """
         Install the file.
-
-        Returns:
-            list of str: Installed files paths.
         """
         raise NotImplementedError(f'Installing {self._name} is not supported.')
 
@@ -293,34 +368,29 @@ class FileBase(ABC):
         Returns:
             file-like object: Response content.
         """
-        # TODO:
-        #  - Compare ETag and cancel action if identical to previous
-        #    ignore absent or weak ETag (starts by "W/")
-
         # Perform requests and handle exceptions
-        resp = self._request(self._url, stream=True)
-        self._resource.exception_handler(resp.status_code, self._name)
+        resp = self._platform.request(self._url, stream=True)
+        self._platform.exception_handler(
+            self._resource, self._name, resp.status_code)
 
         # Get information from headers
         headers = resp.headers
         self._size = int(headers.get('Content-Length', 0))
-
         if self._mtime is None:
             try:
                 self._mtime = parse(headers['Last-Modified']).timestamp()
             except KeyError:
                 pass
 
-        self._etag = headers.get('ETag')
-        self._accept_range = headers.get('Accept-Ranges', 'none') == 'bytes'
+        # Update file name if specified
         try:
-            # Update file name if specified
             content = headers['Content-Disposition'].split('=', 1)
             if content[0].endswith('filename'):
                 self._name = content[1]
         except (KeyError, IndexError):
             pass
 
+        # Return response body
         return Body(resp, self)
 
     def _set_output(self, output):
@@ -390,7 +460,7 @@ class Body:
         response (requests.Response): Response.
         file (nun._files.FileBase): File.
     """
-    __slots__ = ('_response', '_add_size', '_read', '_update_hash', '_file')
+    __slots__ = ('_response', '_add_size', '_read', '_file')
 
     def __init__(self, response, file):
         self._response = response
@@ -399,10 +469,6 @@ class Body:
         # Common functions
         self._add_size = file.add_size_callback
         self._read = self._response.raw.read
-        if file.hash_obj is not None:
-            self._update_hash = file.hash_obj.update
-        else:
-            self._update_hash = None
 
     def read(self, size=-1):
         """
@@ -419,10 +485,6 @@ class Body:
 
         # Update downloaded size
         self._add_size(len(chunk))
-
-        # Compute hash
-        if self._update_hash:
-            self._update_hash(chunk)
 
         return chunk
 

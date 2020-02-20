@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from fnmatch import fnmatch
 from time import sleep
 
-from nun._platforms import PlatformBase, ResourceBase
+from nun._platforms import PlatformBase
 from nun._cache import get_cache, set_cache
 from nun._files import create_file
 
@@ -20,24 +20,12 @@ class Platform(PlatformBase):
     _GITHUB_API_HEADERS = None
     _RATE_LIMIT_WARNED = False
 
-    def get_resource(self, resource_id):
-        """
-        GitHub resource.
-
-        Args:
-            resource_id (str): Resource ID.
-
-        Returns:
-            Resource: nun._platforms.github.Resource
-        """
-        return Resource(self, resource_id)
-
-    def autocomplete(self, partial_resource_id):
+    def autocomplete(self, partial_resource):
         """
         Autocomplete resource ID.
 
         Args:
-            partial_resource_id (str): Partial resource ID.
+            partial_resource (str): Partial resource ID.
 
         Returns:
             list of str: Resource ID candidates.
@@ -46,7 +34,7 @@ class Platform(PlatformBase):
         return []
 
     @staticmethod
-    def _parse_resource_id(resource_id):
+    def _parse_resource(resource):
         """
         Parse the resource ID in format: "owner/repo/ref[/resource]"
 
@@ -63,18 +51,18 @@ class Platform(PlatformBase):
         If not specified, default to "tarball".
 
         Args:
-            resource_id (str): Resource ID.
+            resource (str): Resource.
 
         Returns:
             tuple: owner, repo, reference, resource
         """
         try:
-            owner, repo, ref, resource = resource_id.split('/', 3)
+            owner, repo, ref, res = resource.split('/', 3)
         except ValueError:
-            owner, repo, ref = resource_id.split('/', 2)
-            resource = 'tarball'  # Default to tarball if not specified
+            owner, repo, ref = resource.split('/', 2)
+            res = 'tarball'  # Default to tarball if not specified
 
-        return owner, repo, ref if ref != 'latest' else None, resource
+        return owner, repo, ref if ref != 'latest' else None, res
 
     @classmethod
     def _api_headers(cls, modified_since=None):
@@ -166,8 +154,7 @@ class Platform(PlatformBase):
                     msg += (
                         ' Authenticate with your GitHub account to increase the'
                         ' rate limit.')
-                    # TODO: explain how use GitHub account
-                self._manager.path.warn(msg)
+                    # TODO: Warn + explain how use GitHub account
                 self._RATE_LIMIT_WARNED |= True
 
             # Wait until rate limit API return remaining > 0
@@ -192,8 +179,7 @@ class Platform(PlatformBase):
             return (self._github_api(path))[1] != 404
         return False
 
-    def _handle_404(self, owner, repo=None, ref=None, res=None,
-                    status=404):
+    def _handle_404(self, owner, repo=None, ref=None, res=None, status=404):
         """
         Try to find exactly what is the missing object an raise exception.
 
@@ -238,6 +224,22 @@ class Platform(PlatformBase):
         else:
             raise FileNotFoundError(
                 f'No GitHub user or organization "{owner}" found"')
+
+    def exception_handler(self, resource, name=None, status=404):
+        """
+        Handle exception to return clear error message.
+
+        Args:
+            resource (str): Resource.
+            status (int): Status code. Default to 404.
+            name (str): Resource name. If not specified, use stored resource
+                name.
+
+        Raises:
+            FileNotFoundError: Not found.
+        """
+        owner, repo, ref, res = self._parse_resource(resource)
+        self._handle_404(owner, repo, ref, name or res, status)
 
     def _list_refs(self, owner, repo, tags=False, branches=False):
         """
@@ -294,79 +296,46 @@ class Platform(PlatformBase):
 
         self._handle_404(owner)
 
-
-class Resource(ResourceBase):
-    """
-    GitHub resource.
-
-    Args:
-        platform (nun._platforms.github.Platform): GitHub platform.
-        resource_id (str): Resource ID.
-    """
-    __slots__ = ('_github_api', '_owner', '_repo', '_ref_name',
-                 '_ref_hash', '_ref_assets', '_res')
-
-    def __init__(self, platform, resource_id):
-        ResourceBase.__init__(self, platform, resource_id)
-
-        self._github_api = platform._github_api
-        self._owner, self._repo, self._ref_name, self._res = \
-            self._platform._parse_resource_id(resource_id)
-
-        self._ref_hash = None
-        self._ref_assets = None
-
-    @property
-    def version(self):
+    def _get_files(self, resource, task_id):
         """
-        Resource version.
-        The Commit Hash is used as version on GitHub.
+        Get files of this resource.
 
-        Returns:
-            str: Version.
-        """
-        if self._ref_hash is None:
-            resp, status = self._github_api(
-                f'/repos/{self._owner}/{self._repo}/git/trees/'
-                f'{self._ref_name}')
-            self.exception_handler(status=status)
-            self._ref_hash = resp['sha']
-
-        return self._ref_hash
-
-    @property
-    def files(self):
-        """
-        Files of this resource.
+        Args:
+            resource (str): Resource.
+            task_id (int): Task ID.
 
         Returns:
             generator of nun._files.FileBase: Files.
         """
+        owner, repo, ref, res = self._parse_resource(resource)
+
         # Get reference information
-        self._get_reference()
+        ref_info = self._get_reference(owner, repo, ref)
+        ref = ref_info.get('ref', ref)
 
         # Archives
-        if self._res in ('zipball', 'tarball'):
-            if self._res == 'zipball':
+        if res in ('zipball', 'tarball'):
+            if res == 'zipball':
                 file_type = ext = 'zip'
             else:
                 ext = 'tar.gz'
                 file_type = 'tar'
             yield create_file(
-                f'{self._owner}-{self._repo}-{self._ref_name}.{ext}',
-                f'{GITHUB}/{self._owner}/{self._repo}/{self._res}/'
-                f'{self._ref_name}', self, file_type=file_type,
-                strip_components=1)
+                f'{owner}-{repo}-{ref}.{ext}',
+                f'{GITHUB}/{owner}/{repo}/{res}/{ref}', resource, self, task_id,
+                file_type=file_type, strip_components=1,
+                revision=ref_info['revision'])
             return
 
         # Release assets
-        if self._ref_assets:
+        if ref_info.get('assets'):
             yield_assets = False
-            for asset in self._ref_assets:
-                if fnmatch(asset['name'], self._res):
+            for asset in ref_info['assets']:
+                if fnmatch(asset['name'], res):
                     yield create_file(
-                        asset['name'], asset['browser_download_url'], self,
-                        mtime=asset['updated_at'])
+                        asset['name'], asset['browser_download_url'],
+                        resource, self, task_id, mtime=asset['updated_at'],
+                        revision=asset['updated_at'])
                     yield_assets = True
             if yield_assets:
                 return
@@ -376,122 +345,106 @@ class Resource(ResourceBase):
         #       /repos/:owner/:repo/git/trees/:tree_sha
         #       /repos/:owner/:repo/git/trees/:tree_sha?recursive=1
         yield create_file(
-            self._res, f'{GITHUB_RAW}/{self._owner}/{self._repo}/'
-            f'{self._ref_name}/{self._res}', self)
+            res, f'{GITHUB_RAW}/{owner}/{repo}/{ref}/{res}', resource, self,
+            task_id, revision=ref_info['revision'])
 
-    def exception_handler(self, status=404, res_name=None):
-        """
-        Handle exception to return clear error message.
-
-        Args:
-            status (int): Status code. Default to 404.
-            res_name (str): Resource name. If not specified, use stored resource
-                name.
-
-        Raises:
-            FileNotFoundError: Not found.
-        """
-        self._platform._handle_404(
-            self._owner, self._repo, self._ref_name, res_name or self._res,
-            status=status)
-
-    def _get_reference(self):
+    def _get_reference(self, owner, repo, ref):
         """
         Reference.
+
+        Args:
+            owner (str): Repository owner.
+            repo (str): Repository name
+            ref (str): Reference name.
+
+        Returns:
+            dict or None: dict of reference information if reference found.
         """
-        # Assume that reference is a GitHub release
-        if self._get_release():
-            return
+        for method in (self._get_release, self._get_branch, self._get_tag,
+                       self._get_commit):
+            result = method(owner, repo, ref)
+            if result:
+                return result
+        self._handle_404(owner, repo, ref)
 
-        # Assume that reference is a Git branch
-        elif self._get_branch():
-            return
-
-        # If still no ref_name at this step, does not exist
-        elif not self._ref_name:
-            self.exception_handler()
-
-        # Assume that reference is a Git tag
-        elif self._get_tag():
-            return
-
-        # Assume that reference is a Git commit
-        elif self._get_commit():
-            return
-
-        # Does not exist
-        self.exception_handler()
-
-    def _get_branch(self):
+    def _get_branch(self, owner, repo, ref):
         """
         Get reference as a branch.
 
+        Args:
+            owner (str): Repository owner.
+            repo (str): Repository name
+            ref (str): Reference name.
+
         Returns:
-            bool: True if reference is a branch.
+            dict or None: dict of reference information if reference found.
         """
-        if not self._ref_name:
-            resp, status = self._github_api(
-                f'/repos/{self._owner}/{self._repo}')
+        if not ref:
+            resp, status = self._github_api(f'/repos/{owner}/{repo}')
             if status == 404:
-                return False
-            self._ref_name = resp['default_branch']
+                return None
+            ref = resp['default_branch']
 
-        resp, status = self._github_api(
-            f'/repos/{self._owner}/{self._repo}/branches/{self._ref_name}')
+        resp, status = self._github_api(f'/repos/{owner}/{repo}/branches/{ref}')
         if status != 404:
-            self._ref_hash = resp['commit']['sha']
-            self._mtime = resp['commit']['commit']['committer']['date']
-            return True
-        return False
+            return dict(revision=resp['commit']['sha'], ref=ref,
+                        mtime=resp['commit']['commit']['committer']['date'])
 
-    def _get_commit(self):
+    def _get_commit(self, owner, repo, ref):
         """
         Get reference as a commit.
 
-        Returns:
-            bool: True if reference is a commit.
-        """
-        resp, status = self._github_api(
-            f'/repos/{self._owner}/{self._repo}/commits/{self._ref_name}')
-        if status != 404:
-            self._ref_hash = resp['sha']
-            self._mtime = resp['commit']['committer']['date']
-            return True
-        return False
+        Args:
+            owner (str): Repository owner.
+            repo (str): Repository name
+            ref (str): Reference name.
 
-    def _get_release(self):
+        Returns:
+            dict or None: dict of reference information if reference found.
+        """
+        resp, status = self._github_api(f'/repos/{owner}/{repo}/commits/{ref}')
+        if status != 404:
+            return dict(revision=resp['sha'],
+                        mtime=resp['commit']['committer']['date'])
+
+    def _get_release(self, owner, repo, ref):
         """
         Get reference as a release.
 
+        Args:
+            owner (str): Repository owner.
+            repo (str): Repository name
+            ref (str): Reference name.
+
         Returns:
-            bool: True if reference is a release.
+            dict or None: dict of reference information if reference found.
         """
-        if self._ref_name:
-            url = (f'/repos/{self._owner}/{self._repo}/releases/tags/'
-                   f'{self._ref_name}')
+        if ref:
+            url = f'/repos/{owner}/{repo}/releases/tags/{ref}'
         else:
             # Get latest stable release if no reference specified
-            url = f'/repos/{self._owner}/{self._repo}/releases/latest'
+            url = f'/repos/{owner}/{repo}/releases/latest'
 
         resp, status = self._github_api(url)
         if status != 404:
-            self._ref_name = resp['tag_name']
-            self._ref_assets = resp['assets']
-            self._mtime = resp['published_at']
-            return True
-        return False
+            return dict(ref=resp['tag_name'], assets=resp['assets'])
 
-    def _get_tag(self):
+    def _get_tag(self, owner, repo, ref):
         """
         Get reference as a tag.
 
+        Args:
+            owner (str): Repository owner.
+            repo (str): Repository name
+            ref (str): Reference name.
+
         Returns:
-            bool: True if reference is a tag.
+            dict or None: dict of reference information if reference found.
         """
-        resp, status = self._github_api(
-            f'/repos/{self._owner}/{self._repo}/git/tags/{self._ref_name}')
+        if not ref:
+            self._handle_404(owner, repo)
+
+        resp, status = self._github_api(f'/repos/{owner}/{repo}/git/tags/{ref}')
         if status != 404:
-            self._ref_hash = resp['object']['sha']
-            self._mtime = resp['tagger']['date']
-            return True
-        return False
+            return dict(revision=resp['object']['sha'],
+                        mtime=resp['tagger']['date'])

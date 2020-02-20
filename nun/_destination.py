@@ -3,17 +3,19 @@
 Destination
 """
 from hashlib import blake2b
-from os import rename, utime, remove, readlink, makedirs, symlink, fsencode
+from os import (
+    rename, utime, remove, readlink, makedirs, symlink, fsencode, lstat)
 from os.path import exists, isdir
 from shutil import copystat
 from time import time
 
 from nun._exceptions import CancelException
+from nun._database import DB
 
 BUFFER_SIZE = 65536
 
 
-def _remove_existing(path):
+def remove_existing(path):
     """
     Remove a local file, ignoring error if not existing.
 
@@ -38,13 +40,15 @@ class Destination:
     """
     __slots__ = ('_path', '_hash_cur', '_hash_new', '_hash_old', '_path_part',
                  '_update', '_path_bak', '_mtime', '_force', '_hash_obj',
-                 '_file_obj', '_type')
+                 '_file_obj', '_type', '_db_info')
 
-    def __init__(self, path, mtime=None, force=False, dst_type='file'):
+    def __init__(self, path, task_id, mtime=None, force=False, dst_type='file'):
         # TODO:
         #  - Use SpooledTemporaryFile and freeze it on drive
         #    when self._update is True
         #  - Set ".part.nun" mode to 600
+
+        self._db_info = DB.get_destination(path)
 
         self._path = path
         self._path_part = None
@@ -54,7 +58,16 @@ class Destination:
 
         self._hash_cur = None
         self._hash_new = None
-        self._hash_old = ''  # None  # TODO: set from database
+        if self._db_info:
+            # Check if destination not already linked to another task
+            if task_id != self._db_info['task_id']:
+                self.cancel(f'Destination "{path}" conflits with '
+                            f'task "{self._db_info["task_id"]}"')
+
+            # Retrieve expected current file hash
+            self._hash_old = self._db_info['digest']
+        else:
+            self._hash_old = None
 
         self._update = False
         self._mtime = mtime
@@ -93,6 +106,30 @@ class Destination:
             str: Destination path.
         """
         return self._path
+
+    def db_update(self, transaction_id, task_id, file_id):
+        """
+        Update the destination in the database.
+
+        Args:
+            transaction_id (int): Transaction ID.
+            task_id (int): Task ID.
+            file_id (int): File ID.
+
+        Returns:
+            int: Destination ID.
+        """
+        if self._update:
+            stat = lstat(self._path)
+            return DB.set_destination(
+                ransaction_id=transaction_id, task_id=task_id, file_id=file_id,
+                path=self._path, digest=self._hash_new, st_mode=stat.st_mode,
+                st_uid=stat.st_uid, st_gid=stat.st_gid, st_size=stat.st_size,
+                st_mtime=stat.st_mtime, st_ctime=stat.st_ctime,
+                ref_values=self._db_info)
+
+        # Already up to date
+        return self._db_info['id']
 
     def _check_current(self):
         """
@@ -233,7 +270,7 @@ class Destination:
         Clear the destination back up.
         """
         if self._path_bak is not None:
-            _remove_existing(self._path_bak)
+            remove_existing(self._path_bak)
             self._path_bak = None
 
     def cancel(self, msg=None):
@@ -249,14 +286,14 @@ class Destination:
             self._file_obj = None
 
         if self._path_part is not None:
-            _remove_existing(self._path_part)
+            remove_existing(self._path_part)
             self._path_part = None
 
         if self._path_bak is not None:
             if exists(self._path_bak):
-                _remove_existing(self._path_part)
+                remove_existing(self._path_part)
                 rename(self._path_bak, self._path)
             self._path_bak = None
 
         if msg:
-            raise CancelException()
+            raise CancelException(msg)

@@ -109,11 +109,11 @@ class Output(OutputBase):
                 size, size_unit = self._get_unit(size)
                 if file.exception:
                     self.error(
-                        f'- Errored: {file.resource_id}, {file.name},'
+                        f'- Errored: {file.resource}, {file.name},'
                         f' {file.exception}')
                 else:
                     self.info(
-                        f' - Completed: "{file.resource_id}"'
+                        f' - Completed: "{file.resource}"'
                         f' has been {file.status},'
                         f' {size:>5.1f} {size_unit:>2}')
 
