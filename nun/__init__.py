@@ -20,6 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 __version__ = '1.0.0-alpha.1'
 
 # TODO:
+#  - dest should keep user specified "mode", "UID", "GID", except with --force
 #  - Support formats: deb, rpm, whl, gz, xz, bz2
 #  - Allow user to select file type to use
 #  - Provides packages: WHL, DEB, RPM, chocolatey, Inno setup, exe zip
@@ -53,6 +54,7 @@ __version__ = '1.0.0-alpha.1'
 #  - platform: gitlab
 #  - platform: git (Any git over internet)
 #  - platform: http (any single file over internet)
+#  - git: Parse ".gitmodules" and retrieve submodules
 
 from nun._manager import Manager as _Manager
 
@@ -102,3 +104,15 @@ def extract(resources, output='.', debug=False, trusted=False,
     """
     _perform('extract', resources, output=output, debug=debug, trusted=trusted,
              strip_components=strip_components, force=force)
+
+
+def remove(resources, debug=False):
+    """
+    Download.
+
+    Args:
+        resources (iterable of str): Resources ID.
+        debug (bool): If True, show full error traceback and stop on first
+              error.
+    """
+    _perform('remove', resources, debug=debug)

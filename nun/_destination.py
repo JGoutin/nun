@@ -119,10 +119,10 @@ class Destination:
         Returns:
             int: Destination ID.
         """
-        if self._update:
+        if self._update or self._db_info is None:
             stat = lstat(self._path)
             return DB.set_destination(
-                ransaction_id=transaction_id, task_id=task_id, file_id=file_id,
+                transaction_id=transaction_id, task_id=task_id, file_id=file_id,
                 path=self._path, digest=self._hash_new, st_mode=stat.st_mode,
                 st_uid=stat.st_uid, st_gid=stat.st_gid, st_size=stat.st_size,
                 st_mtime=stat.st_mtime, st_ctime=stat.st_ctime,

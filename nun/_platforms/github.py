@@ -427,7 +427,8 @@ class Platform(PlatformBase):
 
         resp, status = self._github_api(url)
         if status != 404:
-            return dict(ref=resp['tag_name'], assets=resp['assets'])
+            return dict(ref=resp['tag_name'], assets=resp['assets'],
+                        revision=resp['created_at'])
 
     def _get_tag(self, owner, repo, ref):
         """

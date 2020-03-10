@@ -9,9 +9,6 @@ from time import time
 
 from nun._config import DATA_DIR
 
-# Force in memory database (Mainly intended to tests)
-IN_MEMORY = False
-
 # Database definition
 _TABLES = {
     # Transactions
@@ -73,12 +70,29 @@ _TABLES = {
 }
 
 
+def _list_columns():
+    """
+    List columns by tables.
+
+    Returns:
+        dict: Columns per table
+    """
+    return {table: tuple(col[0] for col in cols if col[0] != 'id')
+            for table, cols in _TABLES.items()}
+
+
+_COLUMNS = _list_columns()
+
+
 class _Database:
     """The nun database"""
-    __slots__ = ('_path',)
+    __slots__ = ('_path', '_sql_cache')
 
     def __init__(self):
-        self._path = ":memory:" if IN_MEMORY else join(DATA_DIR, 'nun.sqlite')
+        self._path = join(DATA_DIR, 'nun.sqlite')
+
+        # Cached SQL queries
+        self._sql_cache = {}
 
         # Ensure tables exists
         with self._cursor() as cursor:
@@ -148,7 +162,7 @@ class _Database:
             return None
 
         with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM files WHERE task_id=?, name=?',
+            cursor.execute('SELECT * FROM files WHERE task_id=? AND name=?',
                            (task_id, name))
             return cursor.fetchone()
 
@@ -163,8 +177,7 @@ class _Database:
             list of sqlite3.Row: files information.
         """
         with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM files WHERE task_id=?',
-                           (task_id,))
+            cursor.execute('SELECT * FROM files WHERE task_id=?', (task_id,))
             return cursor.fetchall()
 
     def get_task(self, resource):
@@ -204,7 +217,7 @@ class _Database:
             int: Transaction ID.
         """
         with self._cursor() as cursor:
-            cursor.execute('INSERT INTO transactions VALUES (?)', (time(),))
+            cursor.execute(*self._sql_insert('transactions', timestamp=time()))
             return cursor.lastrowid
 
     def set_task(self, transaction_id, task_id=None, resource=None, action=None,
@@ -275,7 +288,7 @@ class _Database:
             int: File ID.
         """
         return self._sql_insert_or_update(
-            'files', file_id, ref_values, transaction_id=transaction_id,
+            'destinations', file_id, ref_values, transaction_id=transaction_id,
             task_id=task_id, file_id=file_id, path=path, digest=digest,
             st_mode=st_mode, st_uid=st_uid, st_gid=st_gid, st_size=st_size,
             st_mtime=st_mtime, st_ctime=st_ctime)
@@ -339,8 +352,7 @@ class _Database:
             cursor.execute(*self._sql_insert(table, **values))
             return cursor.lastrowid
 
-    @staticmethod
-    def _sql_update(table, row_id=None, ref_values=None, **values):
+    def _sql_update(self, table, row_id=None, ref_values=None, **values):
         """
         Create an UPDATE query to update a row by its ID.
 
@@ -360,16 +372,24 @@ class _Database:
         # Define values to update
         elif ref_values is None:
             ref_values = dict()
+
+        get_value = ref_values.get
         parameters = {key: value for key, value in values.items()
-                      if value is not None and value != ref_values[key]}
+                      if value is not None and value != get_value(key)}
 
         # Write query
-        parameters['row_id'] = row_id
-        values = ', '.join(f'{key} = :{key}' for key in parameters)
-        return f'UPDATE {table} SET {values} WHERE id = :row_id', parameters
+        cols = tuple(sorted(parameters))
+        try:
+            sql = self._sql_cache[(table, cols)]
+        except KeyError:
+            values = ', '.join(f'{col} = :{col}' for col in cols)
+            sql = self._sql_cache[(table, cols)] = (
+                f'UPDATE {table} SET {values} WHERE id = :row_id')
 
-    @staticmethod
-    def _sql_insert(table, **values):
+        parameters['row_id'] = row_id
+        return sql, parameters
+
+    def _sql_insert(self, table, **values):
         """
         Create an INSERT query.
 
@@ -380,10 +400,14 @@ class _Database:
         Returns:
             tuple: sql str, parameters tuple.
         """
-        parameters = tuple(
-            values[key] for key, _ in _TABLES[table] if key != 'id')
-        sql = f'INSERT INTO {table} VALUES ({",".join("?" * len(parameters))})'
-        return sql, parameters
+        cols = _COLUMNS[table]
+        try:
+            sql = self._sql_cache[table]
+        except KeyError:
+            self._sql_cache[table] = sql = (
+                f'INSERT INTO {table}({",".join(cols)}) '
+                f'VALUES ({",".join("?" * len(cols))})')
+        return sql, tuple(values[col] for col in cols)
 
 
 # Use a single database instance

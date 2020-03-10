@@ -23,6 +23,8 @@ class Manager:
 
     def __init__(self, resources, action, debug=False, **action_kwargs):
         self._debug = debug
+        if not resources and action in ('update', 'remove'):
+            resources = "*"
         self._resources = resources
         self._http_session = None
         self._action = action
@@ -41,7 +43,7 @@ class Manager:
             # Use glob pattern matching
             for resource in set(self._resources):
                 for row in DB.get_tasks(resource):
-                    tasks[row.resource] = row
+                    tasks[row['resource']] = row
         else:
             # Use exact matching
             for resource in set(self._resources):
@@ -64,7 +66,7 @@ class Manager:
         """
         # Skipping when removing
         if self._action == 'remove':
-            return list()
+            return dict()
 
         # Update, must use previous action and arguments
         if self._action == 'update':
@@ -82,19 +84,22 @@ class Manager:
         get_files_futures = dict()
         for resource in set(self._resources):
             try:
-                task_id = db_tasks[resource]['id']
+                task_ids = tuple((task['id'], task['resource'])
+                                 for task in db_tasks[resource])
             except KeyError:
                 if update:
                     # TODO: Warn user, can only update already in database
                     continue
-                task_id = DB.set_task(
+                task_ids = ((DB.set_task(
                     transaction_id, resource=resource, action=action,
-                    arguments=action_kwargs)
+                    arguments=action_kwargs), resource),)
             else:
                 if not update:
                     # TODO: Warn user, already installed
                     continue
-            get_files_futures[submit(get_files, resource, task_id)] = task_id
+
+            for task_id, res in task_ids:
+                get_files_futures[submit(get_files, res, task_id)] = task_id
 
         # Start files operations
         tasks_in_progress = dict()
@@ -123,8 +128,7 @@ class Manager:
         """
         # Only wait for completion
         if self._action not in ('update', 'remove'):
-
-            for future_files in tasks_in_progress:
+            for future_files in tasks_in_progress.values():
                 for future in future_files:
                     future.result()
             return
@@ -204,17 +208,15 @@ class Manager:
 
         # List resources
         with ThreadPoolExecutor() as executor:
-            submit = executor.submit
-
             # Get tasks from database
             tasks = self._get_tasks()
 
             # Submit file operation for files that requires update
             tasks_in_progress = self._submit_write_actions(
-                submit, tasks, transaction_id)
+                executor.submit, tasks, transaction_id)
 
             # Submit remove
-            self._submit_remove_actions(submit, tasks_in_progress)
+            self._submit_remove_actions(executor.submit, tasks_in_progress)
 
             # Clean up tasks
             if self._action == 'remove':

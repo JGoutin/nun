@@ -7,8 +7,8 @@ APP_NAME = __name__.split('.')[0]
 
 # Directories
 if os.name == 'nt':
-    CONFIG_DIR = os.path.expandvars(f'%APPDATA%/{APP_NAME}')
-    DATA_DIR = os.path.expandvars(f'%LOCALAPPDATA%/{APP_NAME}')
+    CONFIG_DIR = os.path.join(os.path.expandvars('%APPDATA%'), APP_NAME)
+    DATA_DIR = os.path.join(os.path.expandvars('%LOCALAPPDATA%'), APP_NAME)
     CACHE_DIR = os.path.join(DATA_DIR, 'cache')
 
 elif os.getuid() != 0:
@@ -30,3 +30,5 @@ for _path in (CONFIG_DIR, DATA_DIR, CACHE_DIR):
     os.makedirs(_path, exist_ok=True)
     os.chmod(_path, 0o700)
 del _path
+
+DATA_DIR = os.path.expanduser('~/ram')  # TODO: remove, testing

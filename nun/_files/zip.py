@@ -45,7 +45,7 @@ class File(FileBase):
                     mtime = datetime(*member.date_time).timestamp()
                     try:
                         dest = Destination(path, dst_type=member_type,
-                                           mtime=mtime)
+                                           mtime=mtime, task_id=self._task_id)
 
                         if member_type == 'file':
                             data = member_open(member)

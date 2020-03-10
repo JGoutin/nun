@@ -252,9 +252,9 @@ class FileBase(ABC):
         """
         # Update the file in the database
         file_id = DB.set_file(
-            transaction_id, ref_values=self._db_info,
-            transaction_id=transaction_id, task_id=self._task_id,
-            name=self._name, revision=self._revision, size=self._size)
+            ref_values=self._db_info, transaction_id=transaction_id,
+            task_id=self._task_id, name=self._name, revision=self._revision,
+            size=self._size)
 
         # Update destinations in the database
         if destinations:
@@ -262,6 +262,7 @@ class FileBase(ABC):
             add = self._destinations.add
             kwargs = dict(transaction_id=transaction_id,
                           task_id=self._task_id, file_id=file_id)
+
             for dest in destinations:
                 add(dest.db_update(**kwargs))
 
@@ -285,7 +286,7 @@ class FileBase(ABC):
         path = self._set_path(self._name, strip_components=0)
 
         # Force strip_components=0 on a single file
-        with Destination(path, force=force) as dest:
+        with Destination(path, force=force, task_id=self._task_id) as dest:
             dest.write(self._get())
             dest.move(self._mtime)
             dest.clear()
@@ -327,7 +328,7 @@ class FileBase(ABC):
         for dest in destinations:
             dest.clear()
 
-        self._db_update(transaction_id, (destinations,))
+        self._db_update(transaction_id, destinations)
 
     def _extract(self):
         """

@@ -47,7 +47,8 @@ class File(FileBase):
 
                 try:
                     dest = Destination(
-                        path, mtime=member.mtime, dst_type=member_type)
+                        path, mtime=member.mtime, dst_type=member_type,
+                        task_id=self._task_id)
 
                     if member_type == 'file':
                         data = extractfile(member)
