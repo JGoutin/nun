@@ -1,15 +1,16 @@
 # coding=utf-8
-"""Cache management"""
+"""Local storage"""
 from hashlib import blake2b
-from json import loads, dumps
-from os import listdir, utime, remove
+from json import load, loads, dump, dumps
+from os import listdir, utime, remove, chmod
 from os.path import join, getmtime
 from time import time
 
-from nun._config import CACHE_DIR
+from nun._cfg import CACHE_DIR, CONFIG_DIR, APP_NAME
 
-_LONG_EXPIRY = 172800
-_SHORT_EXPIRY = 60
+_CACHE_LONG_EXPIRY = 172800
+_CACHE_SHORT_EXPIRY = 60
+_STORE_FILE = join(CONFIG_DIR, 'store')
 
 
 def _hash_name(name):
@@ -45,8 +46,8 @@ def _get_expiry():
         dict: Expiry for both short and long modes.
     """
     current_time = time()
-    return {'s': current_time - _SHORT_EXPIRY,
-            'l': current_time - _LONG_EXPIRY}
+    return {'s': current_time - _CACHE_SHORT_EXPIRY,
+            'l': current_time - _CACHE_LONG_EXPIRY}
 
 
 def get_cache(name, recursive=False):
@@ -112,3 +113,59 @@ def set_cache(name, obj, long=False):
     path = join(CACHE_DIR, _hash_name(name) + ('l' if long else 's'))
     with open(path, 'wt') as file:
         file.write(dumps(obj))
+
+
+def get_secret(name):
+    """
+    Get a secret from OS keyring.
+
+    Args:
+        name (str): Secret name.
+
+    Returns:
+        str or None: Secret value.
+    """
+    key = _hash_name(name)
+
+    # Use OS keyring if possible
+    try:
+        from keyring import get_password
+        return get_password(APP_NAME, key)
+
+    # Use local file if not in configuration directory
+    except ImportError:
+        try:
+            with open(_STORE_FILE, 'rt') as store_json:
+                return load(store_json).get(key)
+        except FileNotFoundError:
+            return
+
+
+def set_secret(name, value):
+    """
+    Set a secret in OS keyring.
+
+    Args:
+        name (str): Secret name.
+        value (str): Secret value.
+    """
+    key = _hash_name(name)
+
+    # Use OS keyring if possible
+    try:
+        from keyring import set_password
+        set_password(APP_NAME, key, value)
+
+    # Use local file if not in configuration directory
+    except ImportError:
+        try:
+            with open(_STORE_FILE, 'rt') as store_json:
+                store = load(store_json)
+        except FileNotFoundError:
+            store = dict()
+
+        store[key] = value
+        with open(_STORE_FILE, 'wt') as store_json:
+            dump(store, store_json)
+        chmod(_STORE_FILE, 0o600)
+        return

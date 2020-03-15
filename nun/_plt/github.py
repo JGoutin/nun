@@ -4,39 +4,35 @@ from datetime import datetime, timedelta
 from fnmatch import fnmatch
 from time import sleep
 
-from nun._platforms import PlatformBase
-from nun._cache import get_cache, set_cache
-from nun._files import create_file
+from requests import Session
+
+from nun._plt import PltBase
+from nun._srg import get_cache, set_cache, get_secret
+from nun._src import get_src
+from nun.exceptions import NotFoundException
 
 GITHUB = 'https://github.com'
 GITHUB_API = 'https://api.github.com'
 GITHUB_RAW = 'https://raw.githubusercontent.com'
 
 
-class Platform(PlatformBase):
+class Plt(PltBase):
     """
     GitHub platform.
     """
     _GITHUB_API_HEADERS = None
     _RATE_LIMIT_WARNED = False
 
-    def autocomplete(self, partial_resource):
-        """
-        Autocomplete resource ID.
+    __slots__ = ('_http_request', '_http_session')
 
-        Args:
-            partial_resource (str): Partial resource ID.
-
-        Returns:
-            list of str: Resource ID candidates.
-        """
-        # TODO: implement, see _list_refs, _list_repos
-        return []
+    def __init__(self):
+        self._http_session = Session()
+        self._http_request = self._http_session.request
 
     @staticmethod
-    def _parse_resource(resource):
+    def _parse_res_name(res_name):
         """
-        Parse the resource ID in format: "owner/repo/ref[/resource]"
+        Parse the resource ID in format: "github://owner/repo/ref[/source]"
 
         "owner" is the repository name of the user or organization owning the
         repository on GitHub.
@@ -46,23 +42,23 @@ class Platform(PlatformBase):
         "ref" can be a GitHub release tag, a Git tag, a Git branch or
         a Git commit.
 
-        "resource" can be "tarball", "zipball", a GitHub release asset filename
+        "source" can be "tarball", "zipball", a GitHub release asset filename
         or the relative path or a file present in the Git repository.
         If not specified, default to "tarball".
 
         Args:
-            resource (str): Resource.
+            res_name (str): Resource name.
 
         Returns:
-            tuple: owner, repo, reference, resource
+            tuple: owner, repo, reference, source
         """
         try:
-            owner, repo, ref, res = resource.split('/', 3)
+            owner, repo, ref, src = res_name.split('://', 1)[1].split('/', 3)
         except ValueError:
-            owner, repo, ref = resource.split('/', 2)
-            res = 'tarball'  # Default to tarball if not specified
+            owner, repo, ref = res_name.split('/', 2)
+            src = 'tarball'  # Default to tarball if not specified
 
-        return owner, repo, ref if ref != 'latest' else None, res
+        return owner, repo, ref if ref != 'latest' else None, src
 
     @classmethod
     def _api_headers(cls, modified_since=None):
@@ -78,7 +74,7 @@ class Platform(PlatformBase):
         # Create headers base with authentication if token provided
         if cls._GITHUB_API_HEADERS is None:
             auth_headers = {}
-            token = cls._get_secret('token')
+            token = get_secret(f'{cls.__module__}.token')
             if token:
                 auth_headers["Authorization"] = f"token {token}"
             cls._GITHUB_API_HEADERS = auth_headers
@@ -90,6 +86,26 @@ class Platform(PlatformBase):
             return headers
 
         return cls._GITHUB_API_HEADERS
+
+    def _request(self, url, method='GET', ignore_status=None, **kwargs):
+        """
+        Performs a request.
+
+        Args:
+            method (str): Request method. Default to "GET".
+            url (str): URL.
+            ignore_status (tuple of int): Does not raise exceptions on theses
+                status.
+            kwargs: requests.Session.request keyword arguments
+
+        Returns:
+            requests.Response: Response.
+        """
+        response = self._http_request(method, url, **kwargs)
+        if ignore_status and response.status_code not in ignore_status:
+            response.raise_for_status()
+
+        return response
 
     def _github_api(self, path):
         """
@@ -116,7 +132,7 @@ class Platform(PlatformBase):
 
         # Perform requests
         while True:
-            resp = self.request(
+            resp = self._request(
                 GITHUB_API + path,
                 headers=self._api_headers(modified_since=date),
                 ignore_status=(403, 404))
@@ -159,7 +175,7 @@ class Platform(PlatformBase):
 
             # Wait until rate limit API return remaining > 0
             sleep(60)
-            resp = self.request(
+            resp = self._request(
                 GITHUB_API + '/rate_limit', headers=self._api_headers())
             if int((resp.json())['resources']['core']['remaining']):
                 return
@@ -179,23 +195,19 @@ class Platform(PlatformBase):
             return (self._github_api(path))[1] != 404
         return False
 
-    def _handle_404(self, owner, repo=None, ref=None, res=None, status=404):
+    def _raise_not_found(self, owner, repo=None, ref=None, src=None):
         """
-        Try to find exactly what is the missing object an raise exception.
+        Try to find exactly what is the missing object and raise exception.
 
         Args:
             owner (str): Repository owner.
             repo (str): Repository name
             ref (str): Reference.
-            res (str): Resource.
-            status (int): HTTP status code.
+            src (str): Source.
 
         Raises:
-            FileNotFoundError: Not found.
+            nun.exceptions.NotFoundException: Not found.
         """
-        if status != 404:
-            return
-
         # Owner, cannot exist if no repository specified.
         owner_exists = self._exists(
             f'/orgs/{owner}', owner and repo) or self._exists(
@@ -207,39 +219,23 @@ class Platform(PlatformBase):
 
         # Reference, cannot exist if ref is specified.
         ref_exists = self._exists(
-            f'/repos/{owner}/{repo}/git/trees/{ref}', ref and res) & repo_exists
+            f'/repos/{owner}/{repo}/git/trees/{ref}', ref and src) & repo_exists
 
         if ref_exists:
-            raise FileNotFoundError(
-                f'No GitHub resource "{res}" found for "{owner}/{repo}:{ref}"')
+            raise NotFoundException(
+                f'No GitHub file "{src}" found for "{owner}/{repo}:{ref}"')
 
         elif repo_exists:
-            raise FileNotFoundError(
+            raise NotFoundException(
                 f'No GitHub reference "{ref}" found for "{owner}/{repo}"')
 
         elif owner_exists:
-            raise FileNotFoundError(
+            raise NotFoundException(
                 f'No GitHub repository "{repo}" found for "{owner}"')
 
         else:
-            raise FileNotFoundError(
+            raise NotFoundException(
                 f'No GitHub user or organization "{owner}" found"')
-
-    def exception_handler(self, resource, name=None, status=404):
-        """
-        Handle exception to return clear error message.
-
-        Args:
-            resource (str): Resource.
-            status (int): Status code. Default to 404.
-            name (str): Resource name. If not specified, use stored resource
-                name.
-
-        Raises:
-            FileNotFoundError: Not found.
-        """
-        owner, repo, ref, res = self._parse_resource(resource)
-        self._handle_404(owner, repo, ref, name or res, status)
 
     def _list_refs(self, owner, repo, tags=False, branches=False):
         """
@@ -259,7 +255,8 @@ class Platform(PlatformBase):
         add_ref = refs.append
 
         releases, status = self._github_api(f'/repos/{owner}/{repo}/releases')
-        self._handle_404(owner, repo, status=status)
+        if status == 404:
+            self._raise_not_found(owner, repo)
 
         for release in releases:
             add_ref(dict(
@@ -294,36 +291,36 @@ class Platform(PlatformBase):
         if status != 404:
             return [repo['name'] for repo in resp['result']]
 
-        self._handle_404(owner)
+        self._raise_not_found(owner)
 
-    def _get_files(self, resource, task_id):
+    def get_src_list(self, res_name, res_id):
         """
-        Get files of this resource.
+        Get sources from a specific resource.
 
         Args:
-            resource (str): Resource.
-            task_id (int): Task ID.
+            res_name (str): Resource name.
+            res_id (int): Task ID.
 
         Returns:
-            generator of nun._files.FileBase: Files.
+            generator of nun._src.SrcBase subclass: Sources.
         """
-        owner, repo, ref, res = self._parse_resource(resource)
+        owner, repo, ref, src = self._parse_res_name(res_name)
 
         # Get reference information
         ref_info = self._get_reference(owner, repo, ref)
         ref = ref_info.get('ref', ref)
 
         # Archives
-        if res in ('zipball', 'tarball'):
-            if res == 'zipball':
+        if src in ('zipball', 'tarball'):
+            if src == 'zipball':
                 file_type = ext = 'zip'
             else:
                 ext = 'tar.gz'
                 file_type = 'tar'
-            yield create_file(
+            yield get_src(
                 f'{owner}-{repo}-{ref}.{ext}',
-                f'{GITHUB}/{owner}/{repo}/{res}/{ref}', resource, self, task_id,
-                file_type=file_type, strip_components=1,
+                f'{GITHUB}/{owner}/{repo}/{src}/{ref}', res_name, res_id,
+                src_type=file_type, strip_components=1,
                 revision=ref_info['revision'])
             return
 
@@ -331,10 +328,10 @@ class Platform(PlatformBase):
         if ref_info.get('assets'):
             yield_assets = False
             for asset in ref_info['assets']:
-                if fnmatch(asset['name'], res):
-                    yield create_file(
+                if fnmatch(asset['name'], src):
+                    yield get_src(
                         asset['name'], asset['browser_download_url'],
-                        resource, self, task_id, mtime=asset['updated_at'],
+                        res_name, res_id, mtime=asset['updated_at'],
                         revision=asset['updated_at'])
                     yield_assets = True
             if yield_assets:
@@ -344,9 +341,9 @@ class Platform(PlatformBase):
         # TODO: Get Git tree and apply fnmatch on it
         #       /repos/:owner/:repo/git/trees/:tree_sha
         #       /repos/:owner/:repo/git/trees/:tree_sha?recursive=1
-        yield create_file(
-            res, f'{GITHUB_RAW}/{owner}/{repo}/{ref}/{res}', resource, self,
-            task_id, revision=ref_info['revision'])
+        yield get_src(
+            src, f'{GITHUB_RAW}/{owner}/{repo}/{ref}/{src}', res_name,
+            res_id, revision=ref_info['revision'])
 
     def _get_reference(self, owner, repo, ref):
         """
@@ -365,7 +362,7 @@ class Platform(PlatformBase):
             result = method(owner, repo, ref)
             if result:
                 return result
-        self._handle_404(owner, repo, ref)
+        self._raise_not_found(owner, repo, ref)
 
     def _get_branch(self, owner, repo, ref):
         """
@@ -443,7 +440,7 @@ class Platform(PlatformBase):
             dict or None: dict of reference information if reference found.
         """
         if not ref:
-            self._handle_404(owner, repo)
+            self._raise_not_found(owner, repo)
 
         resp, status = self._github_api(f'/repos/{owner}/{repo}/git/tags/{ref}')
         if status != 404:

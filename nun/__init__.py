@@ -56,43 +56,34 @@ __version__ = '1.0.0-alpha.1'
 #  - platform: http (any single file over internet)
 #  - git: Parse ".gitmodules" and retrieve submodules
 
-from nun._manager import Manager as _Manager
-
-
-def _perform(action, resources, **kwargs):
-    """
-    Perform action.
-
-    Args:
-        action (str): Action method.
-        resources (iterable of str): Resources ID.
-    """
-    with _Manager(resources, action, **kwargs) as manager:
-        manager.perform()
+from nun._ui import set_ui
+from nun._tsk import Tsk as _Tsk
 
 
 def download(resources, output='.', debug=False, force=False):
     """
-    Download.
+    Download resources.
 
     Args:
-        resources (iterable of str): Resources ID.
-        output (path-like object): Destination.
+        resources (iterable of str): Resources URLs.
+        output (path-like object): Output path.
         debug (bool): If True, show full error traceback and stop on first
                       error.
         force (bool): Replace any existing destination even if modified by user.
     """
-    _perform('download', resources, output=output, debug=debug, force=force)
+    with _Tsk(resources, 'download', output=output, debug=debug,
+              force=force) as tsk:
+        tsk.apply()
 
 
 def extract(resources, output='.', debug=False, trusted=False,
             strip_components=0, force=False):
     """
-    Extract.
+    Extract resources.
 
     Args:
-        resources (iterable of str): Resources ID.
-        output (path-like object): Destination.
+        resources (iterable of str): Resources URLs.
+        output (path-like object): Output path.
         debug (bool): If True, show full error traceback and stop on first
                       error.
         trusted (bool): If True, allow extraction of files outside of the
@@ -102,17 +93,47 @@ def extract(resources, output='.', debug=False, trusted=False,
             path on extraction.
         force (bool): Replace any existing destination even if modified by user.
     """
-    _perform('extract', resources, output=output, debug=debug, trusted=trusted,
-             strip_components=strip_components, force=force)
+    with _Tsk(resources, 'extract', output=output, debug=debug, force=force,
+              trusted=trusted, strip_components=strip_components) as tsk:
+        tsk.apply()
 
 
-def remove(resources, debug=False):
+def install(resources, debug=False, force=False):
     """
-    Download.
+    Install resources.
 
     Args:
-        resources (iterable of str): Resources ID.
+        resources (iterable of str): Resources URLs.
+        debug (bool): If True, show full error traceback and stop on first
+                      error.
+        force (bool): Replace any existing destination even if modified by user.
+    """
+    with _Tsk(resources, 'install', debug=debug, force=force) as tsk:
+        tsk.apply()
+
+
+def remove(resources="*", debug=False):
+    """
+    Remove resources.
+
+    Args:
+        resources (iterable of str): Resources URLs.
         debug (bool): If True, show full error traceback and stop on first
               error.
     """
-    _perform('remove', resources, debug=debug)
+    with _Tsk(resources, 'remove', debug=debug) as tsk:
+        tsk.apply()
+
+
+def update(resources="*", debug=False, force=False):
+    """
+    Update resources.
+
+    Args:
+        resources (iterable of str): Resources URLs.
+        debug (bool): If True, show full error traceback and stop on first
+              error.
+        force (bool): Replace any existing destination even if modified by user.
+    """
+    with _Tsk(resources, 'update', debug=debug, force=force) as tsk:
+        tsk.apply()

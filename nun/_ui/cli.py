@@ -4,14 +4,14 @@ from shutil import get_terminal_size
 from time import time, sleep
 from sys import stdout, stderr
 
-from nun._output import OutputBase
+from nun._ui import UiBase
 
 # ANSI shell colors
 _COLORS = dict(RED=31, GREEN=32, YELLOW=33, BLUE=34, PINK=35, CYAN=36, GREY=37)
 
 
-class Output(OutputBase):
-    """Console output"""
+class Ui(UiBase):
+    """Command line interface"""
 
     __slots__ = ('_width', '_clear')
 
@@ -109,11 +109,11 @@ class Output(OutputBase):
                 size, size_unit = self._get_unit(size)
                 if file.exception:
                     self.error(
-                        f'- Errored: {file.resource}, {file.name},'
+                        f'- Errored: {file.res_name}, {file.name},'
                         f' {file.exception}')
                 else:
                     self.info(
-                        f' - Completed: "{file.resource}"'
+                        f' - Completed: "{file.res_name}"'
                         f' has been {file.status},'
                         f' {size:>5.1f} {size_unit:>2}')
 

@@ -9,10 +9,13 @@ from os.path import exists, isdir
 from shutil import copystat
 from time import time
 
-from nun._exceptions import CancelException
-from nun._database import DB
+from nun.exceptions import CancelException
+from nun._db import DB
+from nun._cfg import APP_NAME
 
 BUFFER_SIZE = 65536
+_PRT_EXT = f'.prt.{APP_NAME}'
+_BAK_EXT = f'.bak.{APP_NAME}'
 
 
 def remove_existing(path):
@@ -28,9 +31,9 @@ def remove_existing(path):
         pass
 
 
-class Destination:
+class Dst:
     """
-    Destination file on the local filesystem.
+    Destination on the local filesystem.
 
     Args:
         path (str): Destination path.
@@ -42,13 +45,13 @@ class Destination:
                  '_update', '_path_bak', '_mtime', '_force', '_hash_obj',
                  '_file_obj', '_type', '_db_info')
 
-    def __init__(self, path, task_id, mtime=None, force=False, dst_type='file'):
+    def __init__(self, path, res_id, mtime=None, force=False, dst_type='file'):
         # TODO:
         #  - Use SpooledTemporaryFile and freeze it on drive
         #    when self._update is True
         #  - Set ".part.nun" mode to 600
 
-        self._db_info = DB.get_destination(path)
+        self._db_info = DB.get_dst(path)
 
         self._path = path
         self._path_part = None
@@ -60,9 +63,9 @@ class Destination:
         self._hash_new = None
         if self._db_info:
             # Check if destination not already linked to another task
-            if task_id != self._db_info['task_id']:
+            if res_id != self._db_info['res_id']:
                 self.cancel(f'Destination "{path}" conflits with '
-                            f'task "{self._db_info["task_id"]}"')
+                            f'resource "{self._db_info["res_id"]}"')
 
             # Retrieve expected current file hash
             self._hash_old = self._db_info['digest']
@@ -81,7 +84,7 @@ class Destination:
 
         # Initialize the write sequence
         if dst_type != 'dir':
-            self._path_part = self._path + '.part.nun'
+            self._path_part = self._path + _PRT_EXT
 
         if dst_type == 'file':
             self._file_obj = open(self._path_part, 'wb')
@@ -107,22 +110,22 @@ class Destination:
         """
         return self._path
 
-    def db_update(self, transaction_id, task_id, file_id):
+    def db_update(self, tsk_id, res_id, src_id):
         """
         Update the destination in the database.
 
         Args:
-            transaction_id (int): Transaction ID.
-            task_id (int): Task ID.
-            file_id (int): File ID.
+            tsk_id (int): Task ID.
+            res_id (int): Resource ID.
+            src_id (int): Srouce ID.
 
         Returns:
             int: Destination ID.
         """
         if self._update or self._db_info is None:
             stat = lstat(self._path)
-            return DB.set_destination(
-                transaction_id=transaction_id, task_id=task_id, file_id=file_id,
+            return DB.set_dst(
+                tsk_id=tsk_id, res_id=res_id, src_id=src_id,
                 path=self._path, digest=self._hash_new, st_mode=stat.st_mode,
                 st_uid=stat.st_uid, st_gid=stat.st_gid, st_size=stat.st_size,
                 st_mtime=stat.st_mtime, st_ctime=stat.st_ctime,
@@ -146,7 +149,7 @@ class Destination:
                 try:
                     data = fsencode(readlink(self.path))
                     h = blake2b()
-                    h.update(data)
+                    h._update(data)
                     self._hash_cur = h.hexdigest()
                 except FileNotFoundError:
                     self._hash_cur = ''
@@ -158,7 +161,7 @@ class Destination:
                             chunk = file.read(BUFFER_SIZE)
                             if not chunk:
                                 break
-                            h.update(chunk)
+                            h._update(chunk)
                     self._hash_cur = h.hexdigest()
 
                 except FileNotFoundError:
@@ -178,7 +181,7 @@ class Destination:
         if self._type == 'file':
             # Content is a file-like object to fully copy to the destination
             if hasattr(data, 'read'):
-                update_hash = self._hash_obj.update
+                update_hash = self._hash_obj._update
                 write = self._file_obj.write
                 read = data.read
                 while True:
@@ -192,7 +195,7 @@ class Destination:
 
             # Content are bytes to append to destination
             else:
-                self._hash_obj.update(data)
+                self._hash_obj._update(data)
                 self._file_obj.write(data)
 
         elif self._type == 'dir':
@@ -201,7 +204,7 @@ class Destination:
         elif self._type == 'link':
             data = fsencode(data)
             symlink(data, self._path_part)
-            self._hash_obj.update(data)
+            self._hash_obj._update(data)
 
     def close(self):
         """
@@ -243,7 +246,7 @@ class Destination:
         """
         if self._update:
             # Back up previous destination
-            path_bak = self._path + '.bak.nun'
+            path_bak = self._path + _BAK_EXT
             try:
                 rename(self._path, path_bak)
                 self._path_bak = path_bak

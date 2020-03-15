@@ -30,5 +30,3 @@ for _path in (CONFIG_DIR, DATA_DIR, CACHE_DIR):
     os.makedirs(_path, exist_ok=True)
     os.chmod(_path, 0o700)
 del _path
-
-DATA_DIR = os.path.expanduser('~/ram')  # TODO: remove, testing

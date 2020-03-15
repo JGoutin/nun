@@ -5,26 +5,46 @@ from importlib import import_module
 # Bytes units
 _UNITS = ('B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB')
 
+_UI = dict()
 
-def get_output(name):
+
+def set_ui(ui_type):
     """
-    Get output
+    Set default user interface.
 
     Args:
-        name (str) Output name.
+        ui_type (str) User interface type.
+    """
+    UiBase.DEFAULT = ui_type
+
+
+def get_ui(ui_type=None):
+    """
+    Get user interface
+
+    Args:
+        ui_type (str) User interface type.
 
     Returns:
-        nun._output.OutputBase subclass: output.
+        nun._ui.UiBase subclass: output.
     """
-    if name:
-        return import_module(f'{__name__}.{name}').Output()
+    ui_type = ui_type or UiBase.DEFAULT
+    try:
+        return _UI[ui_type]
+    except KeyError:
+        if ui_type:
+            ui = import_module(f'{__name__}.{UiBase.DEFAULT}').Ui()
+        else:
+            ui = UiBase()
+        _UI[ui_type] = ui
+        return ui
 
-    # No output
-    return OutputBase()
 
+class UiBase:
+    """Base of UI classes"""
 
-class OutputBase:
-    """Base of output classes"""
+    #: Default UI type to use
+    DEFAULT = None
 
     __slots__ = ()
 

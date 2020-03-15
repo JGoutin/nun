@@ -7,12 +7,12 @@ from tempfile import TemporaryDirectory
 from datetime import datetime
 import zipfile
 
-from nun._destination import Destination
-from nun._exceptions import CancelException
-from nun._files import FileBase
+from nun._dst import Dst
+from nun.exceptions import CancelException
+from nun._src import SrcBase
 
 
-class File(FileBase):
+class Src(SrcBase):
     """Zip archives"""
 
     def _extract(self):
@@ -20,7 +20,7 @@ class File(FileBase):
         Extract the file.
 
         Returns:
-            list of nun._destination.Destination: destinations
+            list of nun._dst.Dst: destinations
         """
         # TODO: handle
         #  - handle zipfile.BadZipFile
@@ -33,9 +33,9 @@ class File(FileBase):
                 copyfileobj(self._get(), zip_file)
 
             with zipfile.ZipFile(tmp_zip) as archive:
-                dests = []
+                dsts = []
                 member_open = archive.open
-                append_dest = dests.append
+                append_dst = dsts.append
                 set_path = self._set_path
 
                 for member in archive.infolist():
@@ -44,18 +44,18 @@ class File(FileBase):
 
                     mtime = datetime(*member.date_time).timestamp()
                     try:
-                        dest = Destination(path, dst_type=member_type,
-                                           mtime=mtime, task_id=self._task_id)
+                        dst = Dst(path, dst_type=member_type,
+                                   mtime=mtime, res_id=self._res_id)
 
                         if member_type == 'file':
                             data = member_open(member)
                         else:
                             data = None
 
-                        dest.write(data)
-                        dest.close()
-                        append_dest(dest)
+                        dst.write(data)
+                        dst.close()
+                        append_dst(dst)
                     except CancelException:
                         # TODO: Log error messages at the higher level
                         continue
-        return dests
+        return dsts

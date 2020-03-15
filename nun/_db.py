@@ -7,54 +7,49 @@ from os.path import join
 from sqlite3 import connect, Row
 from time import time
 
-from nun._config import DATA_DIR
+from nun._cfg import DATA_DIR, APP_NAME
 
 # Database definition
 _TABLES = {
-    # Transactions
-    'transactions': (
+    # Tasks
+    'tsk': (
         ('id', 'INTEGER PRIMARY KEY'),
         ('timestamp', 'FLOAT'),
     ),
-    # "Tasks" to perform and keep up to date
-    'tasks': (
+    # Resources
+    'res': (
         ('id', 'INTEGER PRIMARY KEY'),
-        # Latest transaction
-        ('transaction_id', 'INTEGER'),
-        # Resource
-        ('resource', 'TEXT'),
+        # Latest task
+        ('tsk_id', 'INTEGER'),
+        # Resource name
+        ('name', 'TEXT'),
         # Action performed on the resource
         ('action', 'INTEGER'),
         # Arguments of the action
         ('arguments', 'TEXT'),
     ),
-    # A "task" use one or more remote "files" as source, depending on the
-    # specified "resource".
-    # "Files" may be simple files, archives containing other files or packages.
-    # Simple files and archives will generate "destinations" on the local
-    # filesystem.
-    'files': (
+    # Sources
+    'src': (
         ('id', 'INTEGER PRIMARY KEY'),
-        # Latest transaction
-        ('transaction_id', 'INTEGER'),
+        # Latest task
+        ('tsk_id', 'INTEGER'),
         # Parents
-        ('task_id', 'INTEGER'),
-        # Name of the file
+        ('res_id', 'INTEGER'),
+        # Name of the source
         ('name', 'TEXT'),
-        # Value that represent the revision/version of the file
+        # Value that represent the revision/version of the source
         ('revision', 'TEXT'),
-        # Size of the remote file
+        # Size of the remote source
         ('size', 'INTEGER'),
     ),
-    # Destination are objects (Files, directories, ...) on the local filesystem
-    # that are generated from resource "files".
-    'destinations': (
+    # Destinations
+    'dst': (
         ('id', 'INTEGER PRIMARY KEY'),
-        # Latest transaction
-        ('transaction_id', 'INTEGER'),
+        # Latest task
+        ('tsk_id', 'INTEGER'),
         # Parents
-        ('task_id', 'INTEGER'),
-        ('file_id', 'INTEGER'),
+        ('res_id', 'INTEGER'),
+        ('src_id', 'INTEGER'),
         # Absolute path on the local filesystem
         ('path', 'TEXT'),
         # Black2s hash digest
@@ -85,11 +80,11 @@ _COLUMNS = _list_columns()
 
 
 class _Database:
-    """The nun database"""
+    """Application database"""
     __slots__ = ('_path', '_sql_cache')
 
     def __init__(self):
-        self._path = join(DATA_DIR, 'nun.sqlite')
+        self._path = join(DATA_DIR, f'{APP_NAME}.sqlite')
 
         # Cached SQL queries
         self._sql_cache = {}
@@ -118,162 +113,146 @@ class _Database:
         finally:
             connexion.close()
 
-    def get_destination(self, path):
+    def get_dst(self, dst_path):
         """
-        Get destination information from the database.
+        Get destination information.
 
         Args:
-            path (str): Absolute path on the local filesystem.
+            dst_path (str): Destination path.
 
         Returns:
             sqlite3.Row: destination information.
         """
         with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM destinations WHERE path=?', (path,))
+            cursor.execute('SELECT * FROM dst WHERE path=?', (dst_path,))
             return cursor.fetchone()
 
-    def get_destinations(self, file_id):
+    def get_dst_by_src(self, src_id):
         """
-        Get destination information from the database for a file.
+        Get all destination information for a same source.
 
         Args:
-            file_id (int): ID of the parent task.
+            src_id (int): Source ID.
 
         Returns:
             list of sqlite3.Row: destinations information.
         """
         with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM destinations WHERE file_id=?',
-                           (file_id,))
+            cursor.execute('SELECT * FROM dst WHERE src_id=?', (src_id,))
             return cursor.fetchall()
 
-    def get_file(self, task_id, name):
+    def get_src(self, res_id, src_name):
         """
-        Get file information from the database.
+        Get source information.
 
         Args:
-            task_id (int): ID of the parent task.
-            name (str): Name of the file.
+            res_id (int): Source ID.
+            src_name (str): Source name.
 
         Returns:
-            sqlite3.Row: file information.
+            sqlite3.Row: Source information.
         """
-        if task_id is None:
+        if res_id is None:
             return None
 
         with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM files WHERE task_id=? AND name=?',
-                           (task_id, name))
+            cursor.execute('SELECT * FROM src WHERE res_id=? AND name=?',
+                           (res_id, src_name))
             return cursor.fetchone()
 
-    def get_files(self, task_id):
+    def get_src_by_res(self, res_id):
         """
-        Get files information from the database for a task.
+        Get all sources information for a same resource.
 
         Args:
-            task_id (int): ID of the parent task.
+            res_id (int): Resource ID.
 
         Returns:
-            list of sqlite3.Row: files information.
+            list of sqlite3.Row: sources information.
         """
         with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM files WHERE task_id=?', (task_id,))
+            cursor.execute('SELECT * FROM src WHERE res_id=?', (res_id,))
             return cursor.fetchall()
 
-    def get_task(self, resource):
+    def get_res_by_glob(self, res_name):
         """
-        Get a single task information from the database.
+        Get multiples resources information.
 
         Args:
-            resource (str): Resource.
+            res_name (str): Resource name glob pattern.
 
         Returns:
-            sqlite3.Row: task information.
+            list of sqlite3.Row: resources information.
         """
         with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM tasks WHERE resource=?', (resource,))
-            return cursor.fetchone()
-
-    def get_tasks(self, resource):
-        """
-        Get multiples tasks information from the database.
-
-        Args:
-            resource (str): Resource glob pattern.
-
-        Returns:
-            list of sqlite3.Row: tasks information.
-        """
-        with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM tasks WHERE resource GLOB ?',
-                           (resource,))
+            cursor.execute('SELECT * FROM res WHERE name GLOB ?', (res_name,))
             return cursor.fetchall()
 
-    def set_transaction(self):
+    def set_tsk(self):
         """
-        Create a new transaction in the database.
+        Insert a task.
 
         Returns:
-            int: Transaction ID.
+            int: Task ID.
         """
         with self._cursor() as cursor:
-            cursor.execute(*self._sql_insert('transactions', timestamp=time()))
+            cursor.execute(*self._sql_insert('tsk', timestamp=time()))
             return cursor.lastrowid
 
-    def set_task(self, transaction_id, task_id=None, resource=None, action=None,
-                 arguments=None, ref_values=None):
+    def set_res(self, tsk_id, res_id=None, name=None, action=None,
+                arguments=None, ref_values=None):
         """
-        Add or update a task in the database.
+        Insert or update a resource.
 
         Args:
-            transaction_id (int): Transaction ID.
-            task_id (int): Task ID.
-            resource (str): Resource.
+            tsk_id (int): Task ID.
+            res_id (int): Resource ID. Perform update if specified, else insert.
+            name (str): Resource name.
             action (str): Action.
             arguments (dict): Action arguments.
             ref_values (sqlite3.Row): Previous row values.
 
         Returns:
-            int: File ID.
+            int: Resource ID.
         """
         if arguments:
             arguments = dumps(arguments)
         return self._sql_insert_or_update(
-            'tasks', task_id, ref_values, resource=resource,
-            transaction_id=transaction_id, action=action, arguments=arguments)
+            'res', res_id, ref_values, name=name, tsk_id=tsk_id, action=action,
+            arguments=arguments)
 
-    def set_file(self, transaction_id, task_id=None, file_id=None, name=None,
-                 revision=None, size=None, ref_values=None):
+    def set_src(self, tsk_id, res_id=None, src_id=None, name=None,
+                revision=None, size=None, ref_values=None):
         """
-        Add or update a file in the database.
+        Insert or update a source.
 
         Args:
-            transaction_id (int): Transaction ID.
-            task_id (int): Task ID.
-            file_id (int): File ID if already in the database.
-            name (str): File name.
+            tsk_id (int): Task ID.
+            res_id (int): Resource ID.
+            src_id (int): Source ID. Perform update if specified, else insert.
+            name (str): Source name.
             revision (str): File revision.
             size (int): File size
             ref_values (sqlite3.Row): Previous row values.
 
         Returns:
-            int: File ID.
+            int: Source ID.
         """
         return self._sql_insert_or_update(
-            'files', file_id, ref_values, transaction_id=transaction_id,
-            task_id=task_id, name=name, revision=revision, size=size)
+            'src', src_id, ref_values, tsk_id=tsk_id,
+            res_id=res_id, name=name, revision=revision, size=size)
 
-    def set_destination(self, transaction_id, task_id=None, file_id=None,
-                        path=None, digest=None, st_mode=None, st_uid=None,
-                        st_gid=None, st_size=None, st_mtime=None, st_ctime=None,
-                        ref_values=None):
+    def set_dst(self, tsk_id, res_id=None, src_id=None,
+                path=None, digest=None, st_mode=None, st_uid=None,
+                st_gid=None, st_size=None, st_mtime=None, st_ctime=None,
+                ref_values=None):
         """
-        Add or update a destination in the database.
+        Insert or update a destination.
 
         Args:
-            transaction_id (int): Transaction ID.
-            task_id (int): Task ID.
-            file_id (int): File ID if already in the database.
+            tsk_id (int): Task ID.
+            res_id (int): Resource ID.
+            src_id (int): Source ID.
             path (str): Path.
             digest (str): Digest.
             st_mode (int): mode
@@ -285,46 +264,44 @@ class _Database:
             ref_values (sqlite3.Row): Previous row values.
 
         Returns:
-            int: File ID.
+            int: Destination ID.
         """
         return self._sql_insert_or_update(
-            'destinations', file_id, ref_values, transaction_id=transaction_id,
-            task_id=task_id, file_id=file_id, path=path, digest=digest,
+            'dst', src_id, ref_values, tsk_id=tsk_id,
+            res_id=res_id, src_id=src_id, path=path, digest=digest,
             st_mode=st_mode, st_uid=st_uid, st_gid=st_gid, st_size=st_size,
             st_mtime=st_mtime, st_ctime=st_ctime)
 
-    def del_task(self, task_id):
+    def del_res(self, res_id):
         """
-        Delete a task from the database.
+        Delete a resource from the database.
 
         Args:
-            task_id (int): Task ID.
+            res_id (int): Resource ID.
         """
         with self._cursor() as cursor:
-            cursor.execute('DELETE FROM tasks WHERE id = ?', (task_id,))
+            cursor.execute('DELETE FROM res WHERE id = ?', (res_id,))
 
-    def del_file(self, file_id):
+    def del_src(self, src_id):
         """
-        Delete a file from the database, and all related destinations.
+        Delete a source and all related destinations.
 
         Args:
-            file_id (int): Destination ID.
+            src_id (int): Source ID.
         """
         with self._cursor() as cursor:
-            cursor.execute('DELETE FROM files WHERE id = ?', (file_id,))
-            cursor.execute('DELETE FROM destinations WHERE file_id = ?',
-                           (file_id,))
+            cursor.execute('DELETE FROM src WHERE id = ?', (src_id,))
+            cursor.execute('DELETE FROM dst WHERE src_id = ?', (src_id,))
 
-    def del_destination(self, destination_id):
+    def del_dst(self, dst_id):
         """
-        Delete a destination from the database.
+        Delete a destination.
 
         Args:
-            destination_id (int): Destination ID.
+            dst_id (int): Destination ID.
         """
         with self._cursor() as cursor:
-            cursor.execute('DELETE FROM destinations WHERE id = ?',
-                           (destination_id,))
+            cursor.execute('DELETE FROM dst WHERE id = ?', (dst_id,))
 
     def _sql_insert_or_update(self, table, row_id=None, ref_values=None,
                               **values):

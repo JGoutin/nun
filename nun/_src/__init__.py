@@ -7,8 +7,10 @@ from os import fsdecode
 from os.path import join, isdir, realpath, dirname, expanduser, isabs, splitext
 from pathlib import PurePath
 
-from nun._destination import Destination
-from nun._database import DB
+from requests import Session
+
+from nun._dst import Dst, remove_existing
+from nun._db import DB
 
 #: File types aliases
 ALIASES = {
@@ -19,80 +21,84 @@ ALIASES = {
 }
 
 
-def create_file(name, url, resource, platform, task_id, file_type=None,
-                mtime=None, strip_components=0, revision=None):
+def get_src(name, url, res_name, res_id, src_type=None,
+            mtime=None, strip_components=0, revision=None):
     """
+    Sources factory.
+
     Args:
-        name (str): File name.
+        name (str): Source name.
         url (str): URL.
-        resource (nun._platforms.ResourceBase subclass instance): Resource.
-        platform (nun._platforms.PlatformBase subclass): platform
-        task_id (int): Task ID.
-        file_type (str): File type to use if known in advance.
+        res_name (str): Resource Name.
+        res_id (int): Resource ID.
+        src_type (str): File type to use if known in advance.
         mtime (int or float): Modification timestamp.
         strip_components (int): strip NUMBER leading components from file
             path when extracting an archive.
         revision (str): File revision.
 
     Returns:
-        nun._files.FileBase subclass instance: File
+        nun._src.SrcBase subclass instance: Source
     """
     # Detect file type based on its extension
-    if file_type is None:
+    if src_type is None:
         filename, ext = splitext(name.lower())
         if ext in ('.gz', '.bz2', '.lz', '.xz') and filename.endswith('.tar'):
             # Handle the ".tar.<compression>" special case
-            file_type = 'tar'
+            src_type = 'tar'
         else:
-            file_type = ext.lstrip('.')
+            src_type = ext.lstrip('.')
 
-        file_type = ALIASES.get(file_type, file_type)
+        src_type = ALIASES.get(src_type, src_type)
 
     try:
-        cls = import_module(f'nun._files.{file_type}').File
+        cls = import_module(f'{__name__}.{src_type}').Src
     except ImportError:
-        cls = FileBase
+        cls = SrcBase
 
-    return cls(name, url, resource, platform, task_id, mtime=mtime,
+    return cls(name, url, res_name, res_id, mtime=mtime,
                strip_components=strip_components, revision=revision)
 
 
-class FileBase(ABC):
+class SrcBase(ABC):
     """
-    File base.
+    Source base.
 
     Args:
-        name (str): File name.
+        src_name (str): Source name.
         url (str): URL.
-        resource (str): Resource.
-        platform (nun._platforms.PlatformBase subclass): platform
-        task_id (int): Task ID.
+        res_name (str): Resource.
+        res_id (int): Resource ID.
         mtime (int or float or str): Modification time or timestamp.
         strip_components (int): strip NUMBER leading components from file
             path when extracting an archive.
         revision (str): File revision.
     """
-    __slots__ = ('_name', '_url', '_resource', '_size', '_task_id',
+    __slots__ = ('_name', '_url', '_res_name', '_size', '_res_id',
                  '_size_done', '_done', '_exception', '_mtime', '_revision',
-                 '_output', '_trusted', '_platform', '_db_info',
-                 '_destinations')
+                 '_output', '_trusted', '_db_info', '_src_id',
+                 '_dst_ids', '_session')
 
-    def __init__(self, name, url, resource, platform, task_id,
+    def __init__(self, src_name, url, res_name, res_id,
                  mtime=None, strip_components=0, revision=None):
 
-        self._name = name
+        self._name = src_name
         self._url = url
-        self._resource = resource
-        self._platform = platform
+        self._res_name = res_name
         self._done = False
         self._exception = None
         self._output = None
         self._strip_components = strip_components
         self._trusted = False
-        self._task_id = task_id
-        self._db_info = DB.get_file(task_id, name)
+        self._res_id = res_id
+        self._db_info = db_info = DB.get_src(res_id, src_name)
         self._revision = self._get_revision(revision)
-        self._destinations = None
+        self._dst_ids = None
+        self._session = Session()
+        if db_info:
+            self._src_id = db_info['id']
+        else:
+            self._src_id = None
 
         if isinstance(mtime, str):
             mtime = parse(mtime).timestamp()
@@ -105,7 +111,7 @@ class FileBase(ABC):
     @property
     def name(self):
         """
-        File name.
+        Source name.
 
         Returns:
             str: name.
@@ -113,19 +119,19 @@ class FileBase(ABC):
         return self._name
 
     @property
-    def resource(self):
+    def res_name(self):
         """
-        File resource
+        Resource name.
 
         Returns:
-            str: resource.
+            str: resource name.
         """
-        return self._resource
+        return self._res_name
 
     @property
     def size(self):
         """
-        File size.
+        Source size.
 
         Returns:
             int: number of bytes.
@@ -135,7 +141,7 @@ class FileBase(ABC):
     @property
     def size_done(self):
         """
-        Processed file size.
+        Processed source size.
 
         Returns:
             int: number of bytes.
@@ -163,7 +169,7 @@ class FileBase(ABC):
         return self._exception
 
     @property
-    def destinations(self):
+    def dst_ids(self):
         """
         Destinations IDs.
 
@@ -171,7 +177,7 @@ class FileBase(ABC):
             None or set of int: Destinations IDs. If None,
                 the file and its destinations are unchanged.
         """
-        return self._destinations
+        return self._dst_ids
 
     def _cancel(self, update, force):
         """
@@ -186,7 +192,7 @@ class FileBase(ABC):
         """
         if (update and not force and self._db_info is not None and
                 self._revision == self._db_info.revision):
-            self._destinations = True
+            self._dst_ids = True
             return True
         return False
 
@@ -203,9 +209,9 @@ class FileBase(ABC):
         if revision is not None:
             return revision
 
-        resp = self._platform.request(self._url, method='HEAD')
-        self._platform.exception_handler(
-            self._resource, self._name, resp.status_code)
+        resp = self._session.head(self._url)
+        resp.raise_for_status()
+
         headers = resp.headers
         etag = headers.get('ETag')
         if etag and not etag.startswith('W/'):
@@ -233,41 +239,50 @@ class FileBase(ABC):
         self._size_done += size
 
     @property
-    def file_id(self):
+    def src_id(self):
         """
-        File ID in database.
+        Source ID in database.
 
         Returns:
-            int: File ID.
+            int: Source ID.
         """
-        return self._db_info['id']
+        return self._src_id
 
-    def _db_update(self, transaction_id, destinations=None):
+    def _db_update(self, tsk_id, dsts=None):
         """
-        Update the file in the database.
+        Update the source in the database.
 
         Args:
-            destinations (iterable of nun._destination.Destination):
-                destinations.
+            tsk_id (int): Task ID.
+            dsts (iterable of nun._dst.Dst): destinations.
         """
-        # Update the file in the database
-        file_id = DB.set_file(
-            ref_values=self._db_info, transaction_id=transaction_id,
-            task_id=self._task_id, name=self._name, revision=self._revision,
+        # Update the source in the database
+        self._src_id = src_id = DB.set_src(
+            ref_values=self._db_info, tsk_id=tsk_id,
+            res_id=self._res_id, name=self._name, revision=self._revision,
             size=self._size)
 
-        # Update destinations in the database
-        if destinations:
-            self._destinations = set()
-            add = self._destinations.add
-            kwargs = dict(transaction_id=transaction_id,
-                          task_id=self._task_id, file_id=file_id)
+        if dsts:
+            # Update destinations in the database
+            self._dst_ids = set()
+            add = self._dst_ids.add
+            kwargs = dict(tsk_id=tsk_id, res_id=self._res_id, src_id=src_id)
 
-            for dest in destinations:
-                add(dest.db_update(**kwargs))
+            for dst in dsts:
+                add(dst.db_update(**kwargs))
 
-    def download(self, output='.', force=False, update=False,
-                 transaction_id=None):
+    def remove_orphans(self):
+        """
+        Remove orphan destinations.
+        """
+        dst_ids = self._dst_ids
+        del_dst = DB.del_dst
+        for dst_row in DB.get_dst_by_src(self._src_id):
+            if dst_row['id'] not in dst_ids:
+                remove_existing(dst_row['path'])
+                del_dst(dst_row['id'])
+
+    def download(self, output='.', force=False, update=False, tsk_id=None):
         """
         Download the file.
 
@@ -277,7 +292,7 @@ class FileBase(ABC):
                 if modified by user.
             update (bool): If True, is an update of an already in the database
                 entry.
-            transaction_id (int): Transaction ID.
+            tsk_id (int): Task ID.
         """
         if self._cancel(update, force):
             return
@@ -286,15 +301,15 @@ class FileBase(ABC):
         path = self._set_path(self._name, strip_components=0)
 
         # Force strip_components=0 on a single file
-        with Destination(path, force=force, task_id=self._task_id) as dest:
-            dest.write(self._get())
-            dest.move(self._mtime)
-            dest.clear()
+        with Dst(path, force=force, res_id=self._res_id) as dst:
+            dst.write(self._get())
+            dst.move(self._mtime)
+            dst.clear()
 
-        self._db_update(transaction_id, (dest,))
+        self._db_update(tsk_id, (dst,))
 
     def extract(self, output='.', trusted=False, strip_components=0,
-                force=False, update=False, transaction_id=None):
+                force=False, update=False, tsk_id=None):
         """
         Extract the file.
 
@@ -309,7 +324,7 @@ class FileBase(ABC):
                 if modified by user.
             update (bool): If True, is an update of an already in the database
                 entry.
-            transaction_id (int): Transaction ID.
+            tsk_id (int): Task ID.
         """
         if self._cancel(update, force):
             return
@@ -320,26 +335,26 @@ class FileBase(ABC):
             self._strip_components = strip_components
 
         # Perform operation sequentially to allow to revert back on error
-        destinations = self._extract()
+        dsts = self._extract()
 
-        for dest in destinations:
-            dest.move()
+        for dst in dsts:
+            dst.move()
 
-        for dest in destinations:
-            dest.clear()
+        for dst in dsts:
+            dst.clear()
 
-        self._db_update(transaction_id, destinations)
+        self._db_update(tsk_id, dsts)
 
     def _extract(self):
         """
         Extract the file.
 
         Returns:
-            list of nun._destination.Destination: destinations
+            list of nun._dst.Dst: destinations
         """
         raise NotImplementedError(f'extracting {self._name} is not supported.')
 
-    def install(self, force=False, update=False, transaction_id=None):
+    def install(self, force=False, update=False, tsk_id=None):
         """
         Install the file.
 
@@ -348,13 +363,13 @@ class FileBase(ABC):
                 if modified by user.
             update (bool): If True, is an update of an already in the database
                 entry.
-            transaction_id (int): Transaction ID.
+            tsk_id (int): Task ID.
         """
         if self._cancel(update, force):
             return
 
         self._install()
-        self._db_update(transaction_id)
+        self._db_update(tsk_id)
 
     def _install(self):
         """
@@ -370,9 +385,8 @@ class FileBase(ABC):
             file-like object: Response content.
         """
         # Perform requests and handle exceptions
-        resp = self._platform.request(self._url, stream=True)
-        self._platform.exception_handler(
-            self._resource, self._name, resp.status_code)
+        resp = self._session.get(self._url, stream=True)
+        resp.raise_for_status()
 
         # Get information from headers
         headers = resp.headers
@@ -459,16 +473,16 @@ class Body:
 
     Args:
         response (requests.Response): Response.
-        file (nun._files.FileBase): File.
+        src (nun._src.SrcBase subclass): Source.
     """
-    __slots__ = ('_response', '_add_size', '_read', '_file')
+    __slots__ = ('_response', '_add_size', '_read', '_src')
 
-    def __init__(self, response, file):
+    def __init__(self, response, src):
         self._response = response
-        self._file = file
+        self._src = src
 
         # Common functions
-        self._add_size = file.add_size_callback
+        self._add_size = src.add_size_callback
         self._read = self._response.raw.read
 
     def read(self, size=-1):
@@ -496,4 +510,4 @@ class Body:
         Returns:
             int: Position.
         """
-        return self._file.size_done
+        return self._src.size_done

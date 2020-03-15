@@ -10,11 +10,12 @@ def _run_command():
     """
     from argparse import ArgumentParser
     from argcomplete import autocomplete
+    from nun._cfg import APP_NAME
 
     # Parser: "nun"
     parser = ArgumentParser(
-        prog='nun', description='A package manager to install from Git '
-                                'repositories and platforms.')
+        prog=APP_NAME, description='A package manager to install from Git '
+                                   'repositories and platforms.')
     sub_parsers = parser.add_subparsers(
         dest='parser_action', title='Commands',
         help='Commands', description=''
@@ -59,14 +60,14 @@ def _run_command():
     description = 'Update packages.'
     action = sub_parsers.add_parser(
         'update', help=description, description=description)
-    action.add_argument('resources', nargs='*', help='Resources.')
+    action.add_argument('resources', nargs='*', help='Resources.', default="*")
 
     # Parser: "nun remove"
     # TODO: Autocomplete resource from tracked
     description = 'Remove and un-track packages.'
     action = sub_parsers.add_parser(
         'remove', help=description, description=description)
-    action.add_argument('resources', nargs='*', help='Resources.')
+    action.add_argument('resources', nargs='*', help='Resources.', default="*")
 
     # Parser: "nun info"
     description = 'Information about package.'
@@ -94,7 +95,7 @@ def _run_command():
         sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
         import nun
-        nun._Manager.OUTPUT = 'console'
+        nun.set_ui('cli')
         getattr(nun, parser_action)(**args)
 
     except KeyboardInterrupt:  # pragma: no cover
