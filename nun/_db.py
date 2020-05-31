@@ -1,4 +1,3 @@
-# coding=utf-8
 """Database"""
 
 from contextlib import contextmanager
@@ -12,56 +11,56 @@ from nun._cfg import DATA_DIR, APP_NAME
 # Database definition
 _TABLES = {
     # Tasks
-    'tsk': (
-        ('id', 'INTEGER PRIMARY KEY'),
-        ('timestamp', 'FLOAT'),
+    "tsk": (
+        ("id", "INTEGER PRIMARY KEY"),
+        ("timestamp", "FLOAT"),
     ),
     # Resources
-    'res': (
-        ('id', 'INTEGER PRIMARY KEY'),
+    "res": (
+        ("id", "INTEGER PRIMARY KEY"),
         # Latest task
-        ('tsk_id', 'INTEGER'),
+        ("tsk_id", "INTEGER"),
         # Resource name
-        ('name', 'TEXT'),
+        ("name", "TEXT"),
         # Action performed on the resource
-        ('action', 'INTEGER'),
+        ("action", "INTEGER"),
         # Arguments of the action
-        ('arguments', 'TEXT'),
+        ("arguments", "TEXT"),
     ),
     # Sources
-    'src': (
-        ('id', 'INTEGER PRIMARY KEY'),
+    "src": (
+        ("id", "INTEGER PRIMARY KEY"),
         # Latest task
-        ('tsk_id', 'INTEGER'),
+        ("tsk_id", "INTEGER"),
         # Parents
-        ('res_id', 'INTEGER'),
+        ("res_id", "INTEGER"),
         # Name of the source
-        ('name', 'TEXT'),
+        ("name", "TEXT"),
         # Value that represent the revision/version of the source
-        ('revision', 'TEXT'),
+        ("revision", "TEXT"),
         # Size of the remote source
-        ('size', 'INTEGER'),
+        ("size", "INTEGER"),
     ),
     # Destinations
-    'dst': (
-        ('id', 'INTEGER PRIMARY KEY'),
+    "dst": (
+        ("id", "INTEGER PRIMARY KEY"),
         # Latest task
-        ('tsk_id', 'INTEGER'),
+        ("tsk_id", "INTEGER"),
         # Parents
-        ('res_id', 'INTEGER'),
-        ('src_id', 'INTEGER'),
+        ("res_id", "INTEGER"),
+        ("src_id", "INTEGER"),
         # Absolute path on the local filesystem
-        ('path', 'TEXT'),
+        ("path", "TEXT"),
         # Black2s hash digest
-        ('digest', 'TEXT'),
+        ("digest", "TEXT"),
         # Filesystem stat attributes
-        ('st_mode', 'INTEGER'),
-        ('st_uid', 'INTEGER'),
-        ('st_gid', 'INTEGER'),
-        ('st_size', 'INTEGER'),
-        ('st_mtime', 'INTEGER'),
-        ('st_ctime', 'INTEGER'),
-    )
+        ("st_mode", "INTEGER"),
+        ("st_uid", "INTEGER"),
+        ("st_gid", "INTEGER"),
+        ("st_size", "INTEGER"),
+        ("st_mtime", "INTEGER"),
+        ("st_ctime", "INTEGER"),
+    ),
 }
 
 
@@ -72,8 +71,10 @@ def _list_columns():
     Returns:
         dict: Columns per table
     """
-    return {table: tuple(col[0] for col in cols if col[0] != 'id')
-            for table, cols in _TABLES.items()}
+    return {
+        table: tuple(col[0] for col in cols if col[0] != "id")
+        for table, cols in _TABLES.items()
+    }
 
 
 _COLUMNS = _list_columns()
@@ -81,10 +82,11 @@ _COLUMNS = _list_columns()
 
 class _Database:
     """Application database"""
-    __slots__ = ('_path', '_sql_cache')
+
+    __slots__ = ("_path", "_sql_cache")
 
     def __init__(self):
-        self._path = join(DATA_DIR, f'{APP_NAME}.sqlite')
+        self._path = join(DATA_DIR, f"{APP_NAME}.sqlite")
 
         # Cached SQL queries
         self._sql_cache = {}
@@ -93,8 +95,9 @@ class _Database:
         with self._cursor() as cursor:
             for table, columns in _TABLES.items():
                 cursor.execute(
-                    f'CREATE TABLE IF NOT EXISTS {table}'
-                    f'({", ".join(" ".join(column) for column in columns)})')
+                    f"CREATE TABLE IF NOT EXISTS {table}"
+                    f'({", ".join(" ".join(column) for column in columns)})'
+                )
 
     @contextmanager
     def _cursor(self):
@@ -124,7 +127,7 @@ class _Database:
             sqlite3.Row: destination information.
         """
         with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM dst WHERE path=?', (dst_path,))
+            cursor.execute("SELECT * FROM dst WHERE path=?", (dst_path,))
             return cursor.fetchone()
 
     def get_dst_by_src(self, src_id):
@@ -138,7 +141,7 @@ class _Database:
             list of sqlite3.Row: destinations information.
         """
         with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM dst WHERE src_id=?', (src_id,))
+            cursor.execute("SELECT * FROM dst WHERE src_id=?", (src_id,))
             return cursor.fetchall()
 
     def get_src(self, res_id, src_name):
@@ -156,8 +159,9 @@ class _Database:
             return None
 
         with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM src WHERE res_id=? AND name=?',
-                           (res_id, src_name))
+            cursor.execute(
+                "SELECT * FROM src WHERE res_id=? AND name=?", (res_id, src_name)
+            )
             return cursor.fetchone()
 
     def get_src_by_res(self, res_id):
@@ -171,7 +175,7 @@ class _Database:
             list of sqlite3.Row: sources information.
         """
         with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM src WHERE res_id=?', (res_id,))
+            cursor.execute("SELECT * FROM src WHERE res_id=?", (res_id,))
             return cursor.fetchall()
 
     def get_res_by_glob(self, res_name):
@@ -185,7 +189,7 @@ class _Database:
             list of sqlite3.Row: resources information.
         """
         with self._cursor() as cursor:
-            cursor.execute('SELECT * FROM res WHERE name GLOB ?', (res_name,))
+            cursor.execute("SELECT * FROM res WHERE name GLOB ?", (res_name,))
             return cursor.fetchall()
 
     def set_tsk(self):
@@ -196,11 +200,18 @@ class _Database:
             int: Task ID.
         """
         with self._cursor() as cursor:
-            cursor.execute(*self._sql_insert('tsk', timestamp=time()))
+            cursor.execute(*self._sql_insert("tsk", timestamp=time()))
             return cursor.lastrowid
 
-    def set_res(self, tsk_id, res_id=None, name=None, action=None,
-                arguments=None, ref_values=None):
+    def set_res(
+        self,
+        tsk_id,
+        res_id=None,
+        name=None,
+        action=None,
+        arguments=None,
+        ref_values=None,
+    ):
         """
         Insert or update a resource.
 
@@ -218,11 +229,25 @@ class _Database:
         if arguments:
             arguments = dumps(arguments)
         return self._sql_insert_or_update(
-            'res', res_id, ref_values, name=name, tsk_id=tsk_id, action=action,
-            arguments=arguments)
+            "res",
+            res_id,
+            ref_values,
+            name=name,
+            tsk_id=tsk_id,
+            action=action,
+            arguments=arguments,
+        )
 
-    def set_src(self, tsk_id, res_id=None, src_id=None, name=None,
-                revision=None, size=None, ref_values=None):
+    def set_src(
+        self,
+        tsk_id,
+        res_id=None,
+        src_id=None,
+        name=None,
+        revision=None,
+        size=None,
+        ref_values=None,
+    ):
         """
         Insert or update a source.
 
@@ -239,13 +264,31 @@ class _Database:
             int: Source ID.
         """
         return self._sql_insert_or_update(
-            'src', src_id, ref_values, tsk_id=tsk_id,
-            res_id=res_id, name=name, revision=revision, size=size)
+            "src",
+            src_id,
+            ref_values,
+            tsk_id=tsk_id,
+            res_id=res_id,
+            name=name,
+            revision=revision,
+            size=size,
+        )
 
-    def set_dst(self, tsk_id, res_id=None, src_id=None,
-                path=None, digest=None, st_mode=None, st_uid=None,
-                st_gid=None, st_size=None, st_mtime=None, st_ctime=None,
-                ref_values=None):
+    def set_dst(
+        self,
+        tsk_id,
+        res_id=None,
+        src_id=None,
+        path=None,
+        digest=None,
+        st_mode=None,
+        st_uid=None,
+        st_gid=None,
+        st_size=None,
+        st_mtime=None,
+        st_ctime=None,
+        ref_values=None,
+    ):
         """
         Insert or update a destination.
 
@@ -267,10 +310,21 @@ class _Database:
             int: Destination ID.
         """
         return self._sql_insert_or_update(
-            'dst', src_id, ref_values, tsk_id=tsk_id,
-            res_id=res_id, src_id=src_id, path=path, digest=digest,
-            st_mode=st_mode, st_uid=st_uid, st_gid=st_gid, st_size=st_size,
-            st_mtime=st_mtime, st_ctime=st_ctime)
+            "dst",
+            src_id,
+            ref_values,
+            tsk_id=tsk_id,
+            res_id=res_id,
+            src_id=src_id,
+            path=path,
+            digest=digest,
+            st_mode=st_mode,
+            st_uid=st_uid,
+            st_gid=st_gid,
+            st_size=st_size,
+            st_mtime=st_mtime,
+            st_ctime=st_ctime,
+        )
 
     def del_res(self, res_id):
         """
@@ -280,7 +334,7 @@ class _Database:
             res_id (int): Resource ID.
         """
         with self._cursor() as cursor:
-            cursor.execute('DELETE FROM res WHERE id = ?', (res_id,))
+            cursor.execute("DELETE FROM res WHERE id = ?", (res_id,))
 
     def del_src(self, src_id):
         """
@@ -290,8 +344,8 @@ class _Database:
             src_id (int): Source ID.
         """
         with self._cursor() as cursor:
-            cursor.execute('DELETE FROM src WHERE id = ?', (src_id,))
-            cursor.execute('DELETE FROM dst WHERE src_id = ?', (src_id,))
+            cursor.execute("DELETE FROM src WHERE id = ?", (src_id,))
+            cursor.execute("DELETE FROM dst WHERE src_id = ?", (src_id,))
 
     def del_dst(self, dst_id):
         """
@@ -301,10 +355,9 @@ class _Database:
             dst_id (int): Destination ID.
         """
         with self._cursor() as cursor:
-            cursor.execute('DELETE FROM dst WHERE id = ?', (dst_id,))
+            cursor.execute("DELETE FROM dst WHERE id = ?", (dst_id,))
 
-    def _sql_insert_or_update(self, table, row_id=None, ref_values=None,
-                              **values):
+    def _sql_insert_or_update(self, table, row_id=None, ref_values=None, **values):
         """
         UPDATE or INSERT row in a table.
 
@@ -320,10 +373,9 @@ class _Database:
         with self._cursor() as cursor:
             # Row ID or previous values: UPDATE
             if row_id is not None or ref_values is not None:
-                sql, parameters = self._sql_update(
-                    table, row_id, ref_values, **values)
+                sql, parameters = self._sql_update(table, row_id, ref_values, **values)
                 cursor.execute(sql, parameters)
-                return parameters['row_id']
+                return parameters["row_id"]
 
             # INSERT
             cursor.execute(*self._sql_insert(table, **values))
@@ -344,26 +396,30 @@ class _Database:
         """
         # Define ID
         if row_id is None:
-            row_id = ref_values['id']
+            row_id = ref_values["id"]
 
         # Define values to update
         elif ref_values is None:
             ref_values = dict()
 
         get_value = ref_values.get
-        parameters = {key: value for key, value in values.items()
-                      if value is not None and value != get_value(key)}
+        parameters = {
+            key: value
+            for key, value in values.items()
+            if value is not None and value != get_value(key)
+        }
 
         # Write query
         cols = tuple(sorted(parameters))
         try:
             sql = self._sql_cache[(table, cols)]
         except KeyError:
-            values = ', '.join(f'{col} = :{col}' for col in cols)
-            sql = self._sql_cache[(table, cols)] = (
-                f'UPDATE {table} SET {values} WHERE id = :row_id')
+            values = ", ".join(f"{col} = :{col}" for col in cols)
+            sql = self._sql_cache[
+                (table, cols)
+            ] = f"UPDATE {table} SET {values} WHERE id = :row_id"
 
-        parameters['row_id'] = row_id
+        parameters["row_id"] = row_id
         return sql, parameters
 
     def _sql_insert(self, table, **values):
@@ -383,7 +439,8 @@ class _Database:
         except KeyError:
             self._sql_cache[table] = sql = (
                 f'INSERT INTO {table}({",".join(cols)}) '
-                f'VALUES ({",".join("?" * len(cols))})')
+                f'VALUES ({",".join("?" * len(cols))})'
+            )
         return sql, tuple(values[col] for col in cols)
 
 

@@ -1,4 +1,3 @@
-# coding=utf-8
 """Console output"""
 from shutil import get_terminal_size
 from time import time, sleep
@@ -13,7 +12,7 @@ _COLORS = dict(RED=31, GREEN=32, YELLOW=33, BLUE=34, PINK=35, CYAN=36, GREY=37)
 class Ui(UiBase):
     """Command line interface"""
 
-    __slots__ = ('_width', '_clear')
+    __slots__ = ("_width", "_clear")
 
     def __init__(self):
         # Initializes CLI output
@@ -27,7 +26,7 @@ class Ui(UiBase):
         Args:
             text (str): text.
         """
-        stdout.write(f'{self._clear}{text}\n')
+        stdout.write(f"{self._clear}{text}\n")
 
     def warn(self, text):
         """
@@ -54,14 +53,15 @@ class Ui(UiBase):
         Args:
             files (iterable of nun._files.FileBase): Files in progress.
         """
-        self.info('Operation started.')
+        self.info("Operation started.")
 
         # Initialize progress bar
         bar_width = self._width - len(
-            '\r Progress: || 000% | 000.0 KB / 000.0 KB | 000.0 KB/s  ')
+            "\r Progress: || 000% | 000.0 KB / 000.0 KB | 000.0 KB/s  "
+        )
         filled_width = 0
-        percent = '?'
-        total_formatted = '    ?  B'
+        percent = "?"
+        total_formatted = "    ?  B"
 
         # Initialize size information
         full_size = 0
@@ -109,13 +109,14 @@ class Ui(UiBase):
                 size, size_unit = self._get_unit(size)
                 if file.exception:
                     self.error(
-                        f'- Errored: {file.res_name}, {file.name},'
-                        f' {file.exception}')
+                        f"- Errored: {file.res_name}, {file.name}," f" {file.exception}"
+                    )
                 else:
                     self.info(
                         f' - Completed: "{file.res_name}"'
-                        f' has been {file.status},'
-                        f' {size:>5.1f} {size_unit:>2}')
+                        f" has been {file.status},"
+                        f" {size:>5.1f} {size_unit:>2}"
+                    )
 
             # Set approximate progress information
             if not approx:
@@ -123,13 +124,13 @@ class Ui(UiBase):
                 percent = int(progress * 100)
                 filled_width = int(bar_width * progress)
                 total, total_unit = self._get_unit(full_size)
-                total_formatted = f'{total:>5.1f} {total_unit:>2}'
+                total_formatted = f"{total:>5.1f} {total_unit:>2}"
 
             done, done_unit = self._get_unit(size_done)
 
             # Compute size process rate
             cur_time = time()
-            rate = ((size_done - prev_size) / (cur_time - prev_time))
+            rate = (size_done - prev_size) / (cur_time - prev_time)
             if rate < 0.0:
                 rate = 0.0
             rate, rate_unit = self._get_unit(rate)
@@ -138,11 +139,12 @@ class Ui(UiBase):
             stdout.write(
                 f'\rProgress: |{"█" * filled_width}'
                 f'{"-" * (bar_width - filled_width)}| {percent:>3}% '
-                f'| {done:>5.1f} {done_unit:>2} / {total_formatted} '
-                f'| {rate:>5.1f} {rate_unit:>2}/s  ')
+                f"| {done:>5.1f} {done_unit:>2} / {total_formatted} "
+                f"| {rate:>5.1f} {rate_unit:>2}/s  "
+            )
 
             prev_size = size_done
             prev_time = cur_time
             sleep(0.2)
 
-        self.info('Operation completed.')
+        self.info("Operation completed.")

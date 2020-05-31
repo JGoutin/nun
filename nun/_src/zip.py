@@ -1,4 +1,3 @@
-# coding=utf-8
 """Zip archives"""
 
 from os.path import join
@@ -26,10 +25,10 @@ class Src(SrcBase):
         #  - handle zipfile.BadZipFile
         #  - external_attr
         #  - passwords
-        with TemporaryDirectory(prefix='nun_') as tmp:
+        with TemporaryDirectory(prefix="nun_") as tmp:
             # Use a temporary file, Zip cannot be directly streamed like Tar
             tmp_zip = join(tmp, "z.zip")
-            with open(tmp_zip, 'wb') as zip_file:
+            with open(tmp_zip, "wb") as zip_file:
                 copyfileobj(self._get(), zip_file)
 
             with zipfile.ZipFile(tmp_zip) as archive:
@@ -40,14 +39,15 @@ class Src(SrcBase):
 
                 for member in archive.infolist():
                     path = set_path(member.filename)
-                    member_type = 'dir' if member.is_dir() else 'file'
+                    member_type = "dir" if member.is_dir() else "file"
 
                     mtime = datetime(*member.date_time).timestamp()
                     try:
-                        dst = Dst(path, dst_type=member_type,
-                                   mtime=mtime, res_id=self._res_id)
+                        dst = Dst(
+                            path, dst_type=member_type, mtime=mtime, res_id=self._res_id
+                        )
 
-                        if member_type == 'file':
+                        if member_type == "file":
                             data = member_open(member)
                         else:
                             data = None

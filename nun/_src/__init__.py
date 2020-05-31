@@ -1,6 +1,6 @@
-# coding=utf-8
 """Files & packages formats"""
 from abc import ABC
+from cgi import parse_header
 from dateutil.parser import parse
 from importlib import import_module
 from os import fsdecode
@@ -13,16 +13,19 @@ from nun._dst import Dst, remove_existing
 from nun._db import DB
 
 #: File types aliases
-ALIASES = {
-    'tgz': 'tar',
-    'tbz': 'tar',
-    'tlz': 'tar',
-    'txz': 'tar'
-}
+ALIASES = {"tgz": "tar", "tbz": "tar", "tlz": "tar", "txz": "tar"}
 
 
-def get_src(name, url, res_name, res_id, src_type=None,
-            mtime=None, strip_components=0, revision=None):
+def get_src(
+    name,
+    url,
+    res_name,
+    res_id,
+    src_type=None,
+    mtime=None,
+    strip_components=0,
+    revision=None,
+):
     """
     Sources factory.
 
@@ -33,8 +36,8 @@ def get_src(name, url, res_name, res_id, src_type=None,
         res_id (int): Resource ID.
         src_type (str): File type to use if known in advance.
         mtime (int or float): Modification timestamp.
-        strip_components (int): strip NUMBER leading components from file
-            path when extracting an archive.
+        strip_components (int): strip NUMBER leading components from file path when
+            extracting an archive.
         revision (str): File revision.
 
     Returns:
@@ -43,21 +46,28 @@ def get_src(name, url, res_name, res_id, src_type=None,
     # Detect file type based on its extension
     if src_type is None:
         filename, ext = splitext(name.lower())
-        if ext in ('.gz', '.bz2', '.lz', '.xz') and filename.endswith('.tar'):
+        if ext in (".gz", ".bz2", ".lz", ".xz") and filename.endswith(".tar"):
             # Handle the ".tar.<compression>" special case
-            src_type = 'tar'
+            src_type = "tar"
         else:
-            src_type = ext.lstrip('.')
+            src_type = ext.lstrip(".")
 
         src_type = ALIASES.get(src_type, src_type)
 
     try:
-        cls = import_module(f'{__name__}.{src_type}').Src
+        cls = import_module(f"{__name__}.{src_type}").Src
     except ImportError:
         cls = SrcBase
 
-    return cls(name, url, res_name, res_id, mtime=mtime,
-               strip_components=strip_components, revision=revision)
+    return cls(
+        name,
+        url,
+        res_name,
+        res_id,
+        mtime=mtime,
+        strip_components=strip_components,
+        revision=revision,
+    )
 
 
 class SrcBase(ABC):
@@ -70,17 +80,41 @@ class SrcBase(ABC):
         res_name (str): Resource.
         res_id (int): Resource ID.
         mtime (int or float or str): Modification time or timestamp.
-        strip_components (int): strip NUMBER leading components from file
-            path when extracting an archive.
+        strip_components (int): strip NUMBER leading components from file path when
+            extracting an archive.
         revision (str): File revision.
     """
-    __slots__ = ('_name', '_url', '_res_name', '_size', '_res_id',
-                 '_size_done', '_done', '_exception', '_mtime', '_revision',
-                 '_output', '_trusted', '_db_info', '_src_id',
-                 '_dst_ids', '_session')
 
-    def __init__(self, src_name, url, res_name, res_id,
-                 mtime=None, strip_components=0, revision=None):
+    __slots__ = (
+        "_name",
+        "_url",
+        "_res_name",
+        "_size",
+        "_res_id",
+        "_size_done",
+        "_done",
+        "_exception",
+        "_mtime",
+        "_revision",
+        "_output",
+        "_trusted",
+        "_db_info",
+        "_src_id",
+        "_dst_ids",
+        "_session",
+        "_strip_components",
+    )
+
+    def __init__(
+        self,
+        src_name,
+        url,
+        res_name,
+        res_id,
+        mtime=None,
+        strip_components=0,
+        revision=None,
+    ):
 
         self._name = src_name
         self._url = url
@@ -96,7 +130,7 @@ class SrcBase(ABC):
         self._dst_ids = None
         self._session = Session()
         if db_info:
-            self._src_id = db_info['id']
+            self._src_id = db_info["id"]
         else:
             self._src_id = None
 
@@ -174,8 +208,8 @@ class SrcBase(ABC):
         Destinations IDs.
 
         Returns:
-            None or set of int: Destinations IDs. If None,
-                the file and its destinations are unchanged.
+            None or set of int: Destinations IDs. If None, the file and its destinations
+                are unchanged.
         """
         return self._dst_ids
 
@@ -190,8 +224,12 @@ class SrcBase(ABC):
         Returns:
             bool: True if cancelled.
         """
-        if (update and not force and self._db_info is not None and
-                self._revision == self._db_info.revision):
+        if (
+            update
+            and not force
+            and self._db_info is not None
+            and self._revision == self._db_info.revision
+        ):
             self._dst_ids = True
             return True
         return False
@@ -213,11 +251,11 @@ class SrcBase(ABC):
         resp.raise_for_status()
 
         headers = resp.headers
-        etag = headers.get('ETag')
-        if etag and not etag.startswith('W/'):
+        etag = headers.get("ETag")
+        if etag and not etag.startswith("W/"):
             return etag
         else:
-            return headers.get('Last-Modified')
+            return headers.get("Last-Modified")
 
     def set_done_callback(self, future):
         """
@@ -258,9 +296,13 @@ class SrcBase(ABC):
         """
         # Update the source in the database
         self._src_id = src_id = DB.set_src(
-            ref_values=self._db_info, tsk_id=tsk_id,
-            res_id=self._res_id, name=self._name, revision=self._revision,
-            size=self._size)
+            ref_values=self._db_info,
+            tsk_id=tsk_id,
+            res_id=self._res_id,
+            name=self._name,
+            revision=self._revision,
+            size=self._size,
+        )
 
         if dsts:
             # Update destinations in the database
@@ -278,20 +320,19 @@ class SrcBase(ABC):
         dst_ids = self._dst_ids
         del_dst = DB.del_dst
         for dst_row in DB.get_dst_by_src(self._src_id):
-            if dst_row['id'] not in dst_ids:
-                remove_existing(dst_row['path'])
-                del_dst(dst_row['id'])
+            if dst_row["id"] not in dst_ids:
+                remove_existing(dst_row["path"])
+                del_dst(dst_row["id"])
 
-    def download(self, output='.', force=False, update=False, tsk_id=None):
+    def download(self, output=".", force=False, update=False, tsk_id=None):
         """
         Download the file.
 
         Args:
             output (path-like object): Destination.
-            force (bool): Force update and replace any existing destination even
-                if modified by user.
-            update (bool): If True, is an update of an already in the database
-                entry.
+            force (bool): Force update and replace any existing destination even if
+                modified by user.
+            update (bool): If True, is an update of an already in the database entry.
             tsk_id (int): Task ID.
         """
         if self._cancel(update, force):
@@ -308,22 +349,28 @@ class SrcBase(ABC):
 
         self._db_update(tsk_id, (dst,))
 
-    def extract(self, output='.', trusted=False, strip_components=0,
-                force=False, update=False, tsk_id=None):
+    def extract(
+        self,
+        output=".",
+        trusted=False,
+        strip_components=0,
+        force=False,
+        update=False,
+        tsk_id=None,
+    ):
         """
         Extract the file.
 
         Args:
             output (path-like object): Destination.
-            trusted (bool): If True, allow extraction of files outside of the
-                output directory. Default to False, because this can be a
-                security issue if extracted from an untrusted source.
-            strip_components (int): strip NUMBER leading components from file
-                path on extraction.
-            force (bool): Force update and replace any existing destination even
-                if modified by user.
-            update (bool): If True, is an update of an already in the database
-                entry.
+            trusted (bool): If True, allow extraction of files outside of the output
+                directory. Default to False, because this can be a security issue if
+                extracted from an untrusted source.
+            strip_components (int): strip NUMBER leading components from file path on
+                extraction.
+            force (bool): Force update and replace any existing destination even if
+                modified by user.
+            update (bool): If True, is an update of an already in the database entry.
             tsk_id (int): Task ID.
         """
         if self._cancel(update, force):
@@ -331,7 +378,7 @@ class SrcBase(ABC):
 
         self._trusted = trusted
         self._set_output(output)
-        if strip_components is not 0:
+        if strip_components != 0:
             self._strip_components = strip_components
 
         # Perform operation sequentially to allow to revert back on error
@@ -352,17 +399,16 @@ class SrcBase(ABC):
         Returns:
             list of nun._dst.Dst: destinations
         """
-        raise NotImplementedError(f'extracting {self._name} is not supported.')
+        raise NotImplementedError(f"extracting {self._name} is not supported.")
 
     def install(self, force=False, update=False, tsk_id=None):
         """
         Install the file.
 
         Args:
-            force (bool): Force update and replace any existing destination even
-                if modified by user.
-            update (bool): If True, is an update of an already in the database
-                entry.
+            force (bool): Force update and replace any existing destination even if
+                modified by user.
+            update (bool): If True, is an update of an already in the database entry.
             tsk_id (int): Task ID.
         """
         if self._cancel(update, force):
@@ -375,7 +421,7 @@ class SrcBase(ABC):
         """
         Install the file.
         """
-        raise NotImplementedError(f'Installing {self._name} is not supported.')
+        raise NotImplementedError(f"Installing {self._name} is not supported.")
 
     def _get(self):
         """
@@ -390,19 +436,17 @@ class SrcBase(ABC):
 
         # Get information from headers
         headers = resp.headers
-        self._size = int(headers.get('Content-Length', 0))
+        self._size = int(headers.get("Content-Length", 0))
         if self._mtime is None:
             try:
-                self._mtime = parse(headers['Last-Modified']).timestamp()
+                self._mtime = parse(headers["Last-Modified"]).timestamp()
             except KeyError:
                 pass
 
         # Update file name if specified
         try:
-            content = headers['Content-Disposition'].split('=', 1)
-            if content[0].endswith('filename'):
-                self._name = content[1]
-        except (KeyError, IndexError):
+            self._name = parse_header(headers["Content-Disposition"])[1]["filename"]
+        except KeyError:
             pass
 
         # Return response body
@@ -417,16 +461,14 @@ class SrcBase(ABC):
         """
         self._output = realpath(expanduser(fsdecode(output)))
 
-    def _set_path(self, path, target_is_dir=False,
-                  strip_components=None):
+    def _set_path(self, path, target_is_dir=False, strip_components=None):
         """
         Set final destination path.
 
         Args:
             path (str): Object path.
             target_is_dir (bool): Target is a directory.
-            strip_components (int): strip NUMBER leading components from file
-                path.
+            strip_components (int): strip NUMBER leading components from file path.
 
         Returns:
             str: Destination absolute path.
@@ -440,11 +482,12 @@ class SrcBase(ABC):
 
         # Ensure path is not outside output directory for untrusted sources
         absolute = isabs(path)
-        if not self._trusted and (absolute or path.startswith('..')):
+        if not self._trusted and (absolute or path.startswith("..")):
             raise PermissionError(
-                f'The "{self._name}" target a destination outside '
-                f'of the output directory. If you trust this source, use the '
-                f'"trusted" option to allow this behavior.')
+                f'The "{self._name}" target a destination outside of the output '
+                f'directory. If you trust this source, use the "trusted" option to '
+                f"allow this behavior."
+            )
 
         # Returns absolute paths without changes
         elif absolute:
@@ -461,7 +504,8 @@ class SrcBase(ABC):
         # Parent directory does not exists
         if not isdir(dirname(self._output)):
             raise FileNotFoundError(
-                f'Output directory "{dirname(self._output)}" does not exists.')
+                f'Output directory "{dirname(self._output)}" does not exists.'
+            )
 
         # This directory is a new sub-directory
         return self._output
@@ -475,7 +519,8 @@ class Body:
         response (requests.Response): Response.
         src (nun._src.SrcBase subclass): Source.
     """
-    __slots__ = ('_response', '_add_size', '_read', '_src')
+
+    __slots__ = ("_response", "_add_size", "_read", "_src")
 
     def __init__(self, response, src):
         self._response = response

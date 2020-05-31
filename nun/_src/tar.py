@@ -1,4 +1,3 @@
-# coding=utf-8
 """Tar archives"""
 
 import tarfile
@@ -8,11 +7,7 @@ from nun.exceptions import CancelException
 from nun._src import SrcBase
 
 
-_TYPES = {
-    tarfile.LNKTYPE: 'link',
-    tarfile.SYMTYPE: 'link',
-    tarfile.DIRTYPE: 'dir'
-}
+_TYPES = {tarfile.LNKTYPE: "link", tarfile.SYMTYPE: "link", tarfile.DIRTYPE: "dir"}
 
 
 class Src(SrcBase):
@@ -43,15 +38,19 @@ class Src(SrcBase):
                     break
 
                 path = set_path(member.name)
-                member_type = get_type(member.type, 'file')
+                member_type = get_type(member.type, "file")
 
                 try:
-                    dst = Dst(path, mtime=member.mtime, dst_type=member_type,
-                              res_id=self._res_id)
+                    dst = Dst(
+                        path,
+                        mtime=member.mtime,
+                        dst_type=member_type,
+                        res_id=self._res_id,
+                    )
 
-                    if member_type == 'file':
+                    if member_type == "file":
                         data = extractfile(member)
-                    elif member_type == 'link':
+                    elif member_type == "link":
                         data = member.linkname
                     else:
                         data = None

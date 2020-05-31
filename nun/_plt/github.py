@@ -11,19 +11,20 @@ from nun._srg import get_cache, set_cache, get_secret
 from nun._src import get_src
 from nun.exceptions import NotFoundException
 
-GITHUB = 'https://github.com'
-GITHUB_API = 'https://api.github.com'
-GITHUB_RAW = 'https://raw.githubusercontent.com'
+GITHUB = "https://github.com"
+GITHUB_API = "https://api.github.com"
+GITHUB_RAW = "https://raw.githubusercontent.com"
 
 
 class Plt(PltBase):
     """
     GitHub platform.
     """
+
     _GITHUB_API_HEADERS = None
     _RATE_LIMIT_WARNED = False
 
-    __slots__ = ('_http_request', '_http_session')
+    __slots__ = ("_http_request", "_http_session")
 
     def __init__(self):
         self._http_session = Session()
@@ -53,12 +54,12 @@ class Plt(PltBase):
             tuple: owner, repo, reference, source
         """
         try:
-            owner, repo, ref, src = res_name.split('://', 1)[1].split('/', 3)
+            owner, repo, ref, src = res_name.split("://", 1)[1].split("/", 3)
         except ValueError:
-            owner, repo, ref = res_name.split('/', 2)
-            src = 'tarball'  # Default to tarball if not specified
+            owner, repo, ref = res_name.split("/", 2)
+            src = "tarball"  # Default to tarball if not specified
 
-        return owner, repo, ref if ref != 'latest' else None, src
+        return owner, repo, ref if ref != "latest" else None, src
 
     @classmethod
     def _api_headers(cls, modified_since=None):
@@ -74,7 +75,7 @@ class Plt(PltBase):
         # Create headers base with authentication if token provided
         if cls._GITHUB_API_HEADERS is None:
             auth_headers = {}
-            token = get_secret(f'{cls.__module__}.token')
+            token = get_secret(f"{cls.__module__}.token")
             if token:
                 auth_headers["Authorization"] = f"token {token}"
             cls._GITHUB_API_HEADERS = auth_headers
@@ -82,12 +83,12 @@ class Plt(PltBase):
         # Add If-Modified-Since to perform API Conditional requests
         if modified_since:
             headers = cls._GITHUB_API_HEADERS.copy()
-            headers['If-Modified-Since'] = modified_since
+            headers["If-Modified-Since"] = modified_since
             return headers
 
         return cls._GITHUB_API_HEADERS
 
-    def _request(self, url, method='GET', ignore_status=None, **kwargs):
+    def _request(self, url, method="GET", ignore_status=None, **kwargs):
         """
         Performs a request.
 
@@ -135,11 +136,12 @@ class Plt(PltBase):
             resp = self._request(
                 GITHUB_API + path,
                 headers=self._api_headers(modified_since=date),
-                ignore_status=(403, 404))
+                ignore_status=(403, 404),
+            )
 
             if resp.status_code == 403:
                 # API Rate limit reached, wait ready and retry
-                if int(resp.headers.get('X-RateLimit-Remaining', '-1')) == 0:
+                if int(resp.headers.get("X-RateLimit-Remaining", "-1")) == 0:
                     self._wait_rate_limit()
                     continue
 
@@ -154,8 +156,9 @@ class Plt(PltBase):
         # Cache and return current request result
         status = resp.status_code
         result = resp.json()
-        set_cache(path, [result, resp.headers['Date'], status],
-                  long=resp.status_code < 400)
+        set_cache(
+            path, [result, resp.headers["Date"], status], long=resp.status_code < 400
+        )
         return result, status
 
     def _wait_rate_limit(self):
@@ -165,19 +168,21 @@ class Plt(PltBase):
         while True:
             # Warn user.
             if not self._RATE_LIMIT_WARNED:
-                msg = 'GitHub rate limit reached, waiting...'
-                if 'Authorization' not in self._GITHUB_API_HEADERS:
+                msg = "GitHub rate limit reached, waiting..."
+                if "Authorization" not in self._GITHUB_API_HEADERS:
                     msg += (
-                        ' Authenticate with your GitHub account to increase the'
-                        ' rate limit.')
+                        " Authenticate with your GitHub account to increase the"
+                        " rate limit."
+                    )
                     # TODO: Warn + explain how use GitHub account
                 self._RATE_LIMIT_WARNED |= True
 
             # Wait until rate limit API return remaining > 0
             sleep(60)
             resp = self._request(
-                GITHUB_API + '/rate_limit', headers=self._api_headers())
-            if int((resp.json())['resources']['core']['remaining']):
+                GITHUB_API + "/rate_limit", headers=self._api_headers()
+            )
+            if int((resp.json())["resources"]["core"]["remaining"]):
                 return
 
     def _exists(self, path, condition):
@@ -209,33 +214,38 @@ class Plt(PltBase):
             nun.exceptions.NotFoundException: Not found.
         """
         # Owner, cannot exist if no repository specified.
-        owner_exists = self._exists(
-            f'/orgs/{owner}', owner and repo) or self._exists(
-            f'/users/{owner}', owner and repo)
+        owner_exists = self._exists(f"/orgs/{owner}", owner and repo) or self._exists(
+            f"/users/{owner}", owner and repo
+        )
 
         # Repository, cannot exist if no ref specified.
-        repo_exists = self._exists(
-            f'/repos/{owner}/{repo}', repo and ref) & owner_exists
+        repo_exists = (
+            self._exists(f"/repos/{owner}/{repo}", repo and ref) & owner_exists
+        )
 
         # Reference, cannot exist if ref is specified.
-        ref_exists = self._exists(
-            f'/repos/{owner}/{repo}/git/trees/{ref}', ref and src) & repo_exists
+        ref_exists = (
+            self._exists(f"/repos/{owner}/{repo}/git/trees/{ref}", ref and src)
+            & repo_exists
+        )
 
         if ref_exists:
             raise NotFoundException(
-                f'No GitHub file "{src}" found for "{owner}/{repo}:{ref}"')
+                f'No GitHub file "{src}" found for "{owner}/{repo}:{ref}"'
+            )
 
         elif repo_exists:
             raise NotFoundException(
-                f'No GitHub reference "{ref}" found for "{owner}/{repo}"')
+                f'No GitHub reference "{ref}" found for "{owner}/{repo}"'
+            )
 
         elif owner_exists:
             raise NotFoundException(
-                f'No GitHub repository "{repo}" found for "{owner}"')
+                f'No GitHub repository "{repo}" found for "{owner}"'
+            )
 
         else:
-            raise NotFoundException(
-                f'No GitHub user or organization "{owner}" found"')
+            raise NotFoundException(f'No GitHub user or organization "{owner}" found"')
 
     def _list_refs(self, owner, repo, tags=False, branches=False):
         """
@@ -254,22 +264,20 @@ class Plt(PltBase):
         refs = list()
         add_ref = refs.append
 
-        releases, status = self._github_api(f'/repos/{owner}/{repo}/releases')
+        releases, status = self._github_api(f"/repos/{owner}/{repo}/releases")
         if status == 404:
             self._raise_not_found(owner, repo)
 
         for release in releases:
-            add_ref(dict(
-                ref=release['tag_name'], type='release', desc=release['name']))
+            add_ref(dict(ref=release["tag_name"], type="release", desc=release["name"]))
 
         if tags:
-            for tag in self._github_api(f'/repos/{owner}/{repo}/tags')[0]:
-                add_ref(dict(type='tag', ref=tag['name']))
+            for tag in self._github_api(f"/repos/{owner}/{repo}/tags")[0]:
+                add_ref(dict(type="tag", ref=tag["name"]))
 
         if branches:
-            for branch in self._github_api(
-                    f'/repos/{owner}/{repo}/branches')[0]:
-                add_ref(dict(type='branch', ref=branch['name']))
+            for branch in self._github_api(f"/repos/{owner}/{repo}/branches")[0]:
+                add_ref(dict(type="branch", ref=branch["name"]))
 
         return refs
 
@@ -283,13 +291,13 @@ class Plt(PltBase):
         Returns:
             list of str: Repositories names.
         """
-        resp, status = self._github_api(f'/orgs/{owner}/repos')
+        resp, status = self._github_api(f"/orgs/{owner}/repos")
         if status != 404:
-            return [repo['name'] for repo in resp['result']]
+            return [repo["name"] for repo in resp["result"]]
 
-        resp, status = self._github_api(f'/users/{owner}/repos')
+        resp, status = self._github_api(f"/users/{owner}/repos")
         if status != 404:
-            return [repo['name'] for repo in resp['result']]
+            return [repo["name"] for repo in resp["result"]]
 
         self._raise_not_found(owner)
 
@@ -308,31 +316,39 @@ class Plt(PltBase):
 
         # Get reference information
         ref_info = self._get_reference(owner, repo, ref)
-        ref = ref_info.get('ref', ref)
+        ref = ref_info.get("ref", ref)
 
         # Archives
-        if src in ('zipball', 'tarball'):
-            if src == 'zipball':
-                file_type = ext = 'zip'
+        if src in ("zipball", "tarball"):
+            if src == "zipball":
+                file_type = ext = "zip"
             else:
-                ext = 'tar.gz'
-                file_type = 'tar'
+                ext = "tar.gz"
+                file_type = "tar"
             yield get_src(
-                f'{owner}-{repo}-{ref}.{ext}',
-                f'{GITHUB}/{owner}/{repo}/{src}/{ref}', res_name, res_id,
-                src_type=file_type, strip_components=1,
-                revision=ref_info['revision'])
+                f"{owner}-{repo}-{ref}.{ext}",
+                f"{GITHUB}/{owner}/{repo}/{src}/{ref}",
+                res_name,
+                res_id,
+                src_type=file_type,
+                strip_components=1,
+                revision=ref_info["revision"],
+            )
             return
 
         # Release assets
-        if ref_info.get('assets'):
+        if ref_info.get("assets"):
             yield_assets = False
-            for asset in ref_info['assets']:
-                if fnmatch(asset['name'], src):
+            for asset in ref_info["assets"]:
+                if fnmatch(asset["name"], src):
                     yield get_src(
-                        asset['name'], asset['browser_download_url'],
-                        res_name, res_id, mtime=asset['updated_at'],
-                        revision=asset['updated_at'])
+                        asset["name"],
+                        asset["browser_download_url"],
+                        res_name,
+                        res_id,
+                        mtime=asset["updated_at"],
+                        revision=asset["updated_at"],
+                    )
                     yield_assets = True
             if yield_assets:
                 return
@@ -342,8 +358,12 @@ class Plt(PltBase):
         #       /repos/:owner/:repo/git/trees/:tree_sha
         #       /repos/:owner/:repo/git/trees/:tree_sha?recursive=1
         yield get_src(
-            src, f'{GITHUB_RAW}/{owner}/{repo}/{ref}/{src}', res_name,
-            res_id, revision=ref_info['revision'])
+            src,
+            f"{GITHUB_RAW}/{owner}/{repo}/{ref}/{src}",
+            res_name,
+            res_id,
+            revision=ref_info["revision"],
+        )
 
     def _get_reference(self, owner, repo, ref):
         """
@@ -357,8 +377,12 @@ class Plt(PltBase):
         Returns:
             dict or None: dict of reference information if reference found.
         """
-        for method in (self._get_release, self._get_branch, self._get_tag,
-                       self._get_commit):
+        for method in (
+            self._get_release,
+            self._get_branch,
+            self._get_tag,
+            self._get_commit,
+        ):
             result = method(owner, repo, ref)
             if result:
                 return result
@@ -377,15 +401,18 @@ class Plt(PltBase):
             dict or None: dict of reference information if reference found.
         """
         if not ref:
-            resp, status = self._github_api(f'/repos/{owner}/{repo}')
+            resp, status = self._github_api(f"/repos/{owner}/{repo}")
             if status == 404:
                 return None
-            ref = resp['default_branch']
+            ref = resp["default_branch"]
 
-        resp, status = self._github_api(f'/repos/{owner}/{repo}/branches/{ref}')
+        resp, status = self._github_api(f"/repos/{owner}/{repo}/branches/{ref}")
         if status != 404:
-            return dict(revision=resp['commit']['sha'], ref=ref,
-                        mtime=resp['commit']['commit']['committer']['date'])
+            return dict(
+                revision=resp["commit"]["sha"],
+                ref=ref,
+                mtime=resp["commit"]["commit"]["committer"]["date"],
+            )
 
     def _get_commit(self, owner, repo, ref):
         """
@@ -399,10 +426,9 @@ class Plt(PltBase):
         Returns:
             dict or None: dict of reference information if reference found.
         """
-        resp, status = self._github_api(f'/repos/{owner}/{repo}/commits/{ref}')
+        resp, status = self._github_api(f"/repos/{owner}/{repo}/commits/{ref}")
         if status != 404:
-            return dict(revision=resp['sha'],
-                        mtime=resp['commit']['committer']['date'])
+            return dict(revision=resp["sha"], mtime=resp["commit"]["committer"]["date"])
 
     def _get_release(self, owner, repo, ref):
         """
@@ -417,15 +443,16 @@ class Plt(PltBase):
             dict or None: dict of reference information if reference found.
         """
         if ref:
-            url = f'/repos/{owner}/{repo}/releases/tags/{ref}'
+            url = f"/repos/{owner}/{repo}/releases/tags/{ref}"
         else:
             # Get latest stable release if no reference specified
-            url = f'/repos/{owner}/{repo}/releases/latest'
+            url = f"/repos/{owner}/{repo}/releases/latest"
 
         resp, status = self._github_api(url)
         if status != 404:
-            return dict(ref=resp['tag_name'], assets=resp['assets'],
-                        revision=resp['created_at'])
+            return dict(
+                ref=resp["tag_name"], assets=resp["assets"], revision=resp["created_at"]
+            )
 
     def _get_tag(self, owner, repo, ref):
         """
@@ -442,7 +469,6 @@ class Plt(PltBase):
         if not ref:
             self._raise_not_found(owner, repo)
 
-        resp, status = self._github_api(f'/repos/{owner}/{repo}/git/tags/{ref}')
+        resp, status = self._github_api(f"/repos/{owner}/{repo}/git/tags/{ref}")
         if status != 404:
-            return dict(revision=resp['object']['sha'],
-                        mtime=resp['tagger']['date'])
+            return dict(revision=resp["object"]["sha"], mtime=resp["tagger"]["date"])

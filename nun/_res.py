@@ -7,18 +7,19 @@ from nun.exceptions import InvalidException
 
 class Res:
     """Resource"""
-    __slots__ = ('_name', '_res_id', '_tsk_id', '_action', '_arguments')
 
-    def __init__(self, tsk_id, res_id=None, name=None, action=None,
-                 arguments=None):
+    __slots__ = ("_name", "_res_id", "_tsk_id", "_action", "_arguments", "_db_info")
+
+    def __init__(self, tsk_id, res_id=None, name=None, action=None, arguments=None):
         self._tsk_id = tsk_id
         self._name = name
         self._action = action
         self._arguments = arguments
 
         # New resource: Checks if exists in database
-        if not res_id:
-            res_id = DB.get_src(res_id, name)['id']
+        self._db_info = db_info = DB.get_src(res_id, name)
+        if not res_id and db_info:
+            res_id = db_info["id"]
         self._res_id = res_id
 
     def apply(self, task_action, submit, force=False):
@@ -30,9 +31,9 @@ class Res:
             submit (function): Task executor submit function.
             force (bool): If True, force operation.
         """
-        if task_action == 'update':
+        if task_action == "update":
             self._update(submit, force)
-        elif task_action == 'remove':
+        elif task_action == "remove":
             self._remove(submit)
         else:
             self._create(submit, force)
@@ -50,8 +51,11 @@ class Res:
 
         # Create the resource in the database
         self._res_id = DB.set_res(
-            self._tsk_id, name=self._name, action=self._action,
-            arguments=self._arguments)
+            self._tsk_id,
+            name=self._name,
+            action=self._action,
+            arguments=self._arguments,
+        )
 
         # Do action
         self._do_action(submit, force)
@@ -72,7 +76,7 @@ class Res:
 
         # Remove source and destinations
         for src_row in DB.get_src_by_res(res_id=self._res_id):
-            add_future(submit(remove_src, src_row['id']))
+            add_future(submit(remove_src, src_row["id"]))
 
         # Wait for completion
         for future in futures:
@@ -112,8 +116,12 @@ class Res:
         # Do action on resource sources
         for src in get_plt(self._name).get_src_list(self._name, self._res_id):
             src_futures[src] = future = submit(
-                getattr(src, self._action), update=update, tsk_id=self._tsk_id,
-                force=force, **self._arguments)
+                getattr(src, self._action),
+                update=update,
+                tsk_id=self._tsk_id,
+                force=force,
+                **self._arguments,
+            )
             future.add_done_callback(src.set_done_callback)
 
         # Wait all write operations completion before start deletion operations
@@ -132,8 +140,8 @@ class Res:
         # Remove orphans sources
         remove_src = self._remove_src
         for src_row in DB.get_src_by_res(res_id=self._res_id):
-            if src_row['id'] not in src_ids:
-                add_future(submit(remove_src, src_row['id']))
+            if src_row["id"] not in src_ids:
+                add_future(submit(remove_src, src_row["id"]))
 
         # Wait for completion
         for future in futures:
@@ -148,5 +156,5 @@ class Res:
             src_id (int): Source ID.
         """
         for dst_row in DB.get_dst_by_src(src_id):
-            remove_existing(dst_row['path'])
+            remove_existing(dst_row["path"])
         DB.del_src(src_id)

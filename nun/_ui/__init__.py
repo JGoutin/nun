@@ -1,9 +1,8 @@
-# coding=utf-8
 """Outputs"""
 from importlib import import_module
 
 # Bytes units
-_UNITS = ('B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB')
+_UNITS = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
 
 _UI = dict()
 
@@ -33,7 +32,7 @@ def get_ui(ui_type=None):
         return _UI[ui_type]
     except KeyError:
         if ui_type:
-            ui = import_module(f'{__name__}.{UiBase.DEFAULT}').Ui()
+            ui = import_module(f"{__name__}.{UiBase.DEFAULT}").Ui()
         else:
             ui = UiBase()
         _UI[ui_type] = ui
@@ -64,6 +63,7 @@ class UiBase:
             text (str): text.
         """
         import warnings
+
         warnings.warn(text)
 
     def error(self, text):

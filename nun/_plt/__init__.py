@@ -18,7 +18,7 @@ def get_plt(res_name):
     Returns:
         nun._plt.PltBase subclass: Platform.
     """
-    sch = res_name.split('://', 1)[0]
+    sch = res_name.split("://", 1)[0]
 
     with _LOCK:
         # Get cached platform
@@ -27,7 +27,7 @@ def get_plt(res_name):
 
         # Or, instantiate the platform and cache it
         except KeyError:
-            plt = _PLATFORMS[sch] = import_module(f'{__name__}.{sch}').Plt()
+            plt = _PLATFORMS[sch] = import_module(f"{__name__}.{sch}").Plt()
             return plt
 
 
